@@ -322,130 +322,187 @@ async function adoptCurrentUser() {
   } catch { /* 离线就算了 */ }
 }
 
-export function openUpdate() {
-  let phase = 'checking';
-  let info = null;
-  let errMsg = '';
-  let got = 0;
-  let total = 0;
-  let poll = 0;
+/* ========================================================================== */
+/* 检查更新（后台静默 + 右下角提示 + 下载完再弹窗）                          */
+/* ========================================================================== */
 
-  const m = modal({ title: '检查更新', subtitle: '从设置的更新地址读取 latest.json', body: '', footer: '' });
+/**
+ * 上报错误：必须先登录，而且每次都要用户点「发送」才写
+ * （同一个错误签名只累计次数，样本最多留 5 条）
+ */
+async function askReportError(signature, message, intro) {
+  if (!state.auth || !state.auth.loggedIn) return false;
+  const ok = await confirmDialog({
+    title: '要上报这次错误吗？',
+    text: `${intro}\n\n点「发送」才会把错误记到本机 data/errors/（之后可以收进仓库）；不点也没关系。`,
+    confirmText: '发送',
+  });
+  if (!ok) return false;
+  try {
+    const r = await (await fetch('/api/report-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        signature: String(signature).slice(0, 120),
+        message: String(message || '').slice(0, 2000),
+        user: state.userId || state.settings.myName || 'anonymous',
+      }),
+    })).json();
+    if (r && r.ok) toast({ type: 'ok', title: '错误已记录', text: `同一错误累计 ${r.count} 次` });
+    return true;
+  } catch (e) {
+    toast({ type: 'err', title: '记录失败', text: e.message });
+    return false;
+  }
+}
 
-  const bar = () => {
-    const pct = total ? Math.min(100, Math.round((got / total) * 100)) : 0;
-    return `
-      <div class="upbar"><span style="width:${pct}%"></span></div>
-      <p class="hint" style="margin:6px 0 0">${total ? `${fmtMB(got)} / ${fmtMB(total)} · ${pct}%` : fmtMB(got)}</p>`;
-  };
+async function fetchCheck() {
+  try {
+    const r = await fetch('/api/update/check', { cache: 'no-store' });
+    return await r.json();
+  } catch (e) {
+    return { ok: false, error: e.message || '网络错误' };
+  }
+}
 
-  const body = () => {
-    if (phase === 'checking') return `<p class="hint" style="margin:0">正在检查…</p>`;
-    if (phase === 'error') {
-      return `<div class="callout warn">${icon('alert')}<div>${esc(errMsg)}</div></div>
-        <p class="hint">更新地址在 设置 → 外观与数据 → 自动更新 里填，形如 <code>https://…/latest.json</code>。</p>`;
-    }
-    if (phase === 'none') {
-      return `<div class="callout ok">${icon('check-circle')}<div>已经是最新版本（${esc(info.current.version || info.current.stamp || '')}）。</div></div>`;
-    }
-    if (phase === 'ready') {
-      const l = info.latest;
-      return `
-        <div class="kv" style="margin-bottom:12px">
-          <div class="kv-row"><span>当前版本</span><b>${esc(info.current.version || info.current.stamp)}</b></div>
-          <div class="kv-row"><span>最新版本</span><b>${esc(l.version || l.stamp)}</b></div>
-          <div class="kv-row"><span>安装包</span><b>${fmtMB(Number(l.size) || 0)}</b></div>
-          ${l.notes ? `<div class="kv-row"><span>更新说明</span><b style="font-weight:450;color:var(--text-2)">${esc(l.notes)}</b></div>` : ''}
-        </div>
-        <p class="hint" style="margin:0">更新会下载到本机、校验 sha256，然后自动退出替换并重启。</p>`;
-    }
-    if (phase === 'downloading') return `<p class="hint" style="margin:0 0 6px">正在下载更新包…</p>${bar()}`;
-    if (phase === 'applying') return `<p class="hint" style="margin:0 0 6px">下载完成，正在校验…</p>${bar()}`;
-    return `<div class="callout ok">${icon('check-circle')}<div>正在重启到新版本，窗口会自己关掉再打开。</div></div>`;
-  };
+function bumpUpdateFailure(msg, manual) {
+  const f = state.settings.updateFail || { count: 0 };
+  f.count = (f.count || 0) + 1;
+  f.last = String(msg || '').slice(0, 200);
+  state.settings.updateFail = f;
+  save();
 
-  const footer = () => {
-    if (phase === 'download') return '';
-    const closeBtn = `<button class="btn ghost" data-k="up-close">${phase === 'restarting' ? '关闭' : '以后再说'}</button>`;
-    if (phase === 'ready') {
-      return `${closeBtn}<button class="btn primary" data-k="up-go">${icon('download')}下载并更新</button>`;
-    }
-    if (phase === 'error' || phase === 'none') {
-      return `${closeBtn}<button class="btn ghost" data-k="up-recheck">${icon('refresh')}重新检查</button>`;
-    }
-    return closeBtn;
-  };
+  if (manual) toast({ type: 'err', title: '检查更新失败', text: f.count >= 5 ? '连续失败 5 次' : `${msg}（第 ${f.count} 次）` });
 
-  const paint = () => { m.setBody(body()); m.setFooter(footer()); };
+  if (f.count >= 5) {
+    state.settings.updateFail = { count: 0 };
+    save();
+    // 满 5 次才问一次，而且要登录
+    askReportError(
+      'update-check: ' + String(msg || '').slice(0, 60),
+      f.last,
+      `检查更新已经连续失败 5 次了：${f.last}`,
+    );
+  }
+}
 
-  async function check() {
-    phase = 'checking';
-    paint();
-    try {
-      const r = await (await fetch('/api/update/check', { cache: 'no-store' })).json();
-      if (!r.ok) { phase = 'error'; errMsg = r.error || '检查失败'; paint(); return; }
-      info = r;
-      phase = r.hasUpdate ? 'ready' : 'none';
-    } catch (e) {
-      phase = 'error';
-      errMsg = e.message || '网络错误';
-    }
-    paint();
+/** 后台检查更新：不弹窗；有更新就在右下角提示 */
+export async function checkUpdate({ manual = false } = {}) {
+  let r = await fetchCheck();
+  if (!r || !r.ok) {
+    // 失败先自己再来一次
+    await new Promise((res) => setTimeout(res, 2500));
+    r = await fetchCheck();
+  }
+  if (!r || !r.ok) {
+    bumpUpdateFailure((r && r.error) || '未知错误', manual);
+    return null;
   }
 
-  async function downloadAndApply() {
-    phase = 'downloading';
-    got = 0;
-    total = Number(info.latest.size) || 0;
-    paint();
-    poll = setInterval(async () => {
+  state.settings.updateFail = { count: 0 };
+  save();
+
+  if (!r.hasUpdate) {
+    if (manual) toast({ type: 'ok', title: '已经是最新版本', text: r.current.version || r.current.stamp || '' });
+    return r;
+  }
+  showUpdateToast(r);
+  return r;
+}
+
+function showUpdateToast(info) {
+  const l = info.latest;
+  toast({
+    type: 'info',
+    title: `有新版本 ${l.version || l.stamp}`,
+    text: `${fmtMB(Number(l.size) || 0)}${l.notes ? ' · ' + l.notes : ''}`,
+    duration: 0,
+    actions: [
+      { label: '更新', onClick: () => startDownload(info) },
+      { label: '稍后', onClick: () => {} },
+    ],
+  });
+}
+
+/** 选择更新之后：后台下载，下好再弹窗 */
+async function startDownload(info) {
+  const tip = toast({ type: 'info', title: '正在后台下载更新…', text: '下载完会弹窗让你确认', duration: 0 });
+  let timer = 0;
+  try {
+    // 服务端立刻返回，进度靠轮询
+    const r = await (await fetch('/api/update/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: info.latest.url }),
+    })).json();
+    if (!r.ok) throw new Error(r.error || '下载失败');
+
+    timer = setInterval(async () => {
       try {
         const p = await (await fetch('/api/update/progress', { cache: 'no-store' })).json();
-        if (p && p.progress) {
-          got = p.progress.received || 0;
-          if (p.progress.total) total = p.progress.total;
-          paint();
+        if (p && p.progress && p.progress.phase === 'downloading') {
+          const g = p.progress.received || 0;
+          const t = p.progress.total || Number(info.latest.size) || 0;
+          const pct = t ? Math.min(100, Math.round((g / t) * 100)) : 0;
+          const el = tip && tip.querySelector('.t-text');
+          if (el) el.textContent = `正在后台下载更新… ${pct}%`;
         }
       } catch { /* 忽略 */ }
-    }, 400);
+    }, 500);
 
-    try {
-      const r = await (await fetch('/api/update/download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: info.latest.url }),
-      })).json();
-      clearInterval(poll);
-      if (!r.ok) throw new Error(r.error || '下载失败');
-      phase = 'applying';
-      paint();
-      const a = await (await fetch('/api/update/apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sha256: info.latest.sha256, stamp: info.latest.stamp }),
-      })).json();
-      if (!a.ok) throw new Error(a.error || '更新失败');
-      phase = 'restarting';
-      paint();
-    } catch (e) {
-      clearInterval(poll);
-      phase = 'error';
-      errMsg = e.message || '更新失败';
-      paint();
+    // 等下载结果（最多 10 分钟）
+    const deadline = Date.now() + 10 * 60 * 1000;
+    for (;;) {
+      await new Promise((res) => setTimeout(res, 800));
+      const p = await (await fetch('/api/update/progress', { cache: 'no-store' })).json();
+      const ph = p && p.progress && p.progress.phase;
+      if (ph === 'ready') break;
+      if (ph === 'error' || !ph) throw new Error((p && p.progress && p.progress.error) || '下载失败');
+      if (Date.now() > deadline) throw new Error('下载超时');
     }
+    installPrompt(info);
+  } catch (e) {
+    toast({ type: 'err', title: '下载更新失败', text: e.message, duration: 8000 });
+    askReportError('update-download: ' + String(e.message).slice(0, 60), e.message, '下载更新失败了：' + e.message);
+  } finally {
+    clearInterval(timer);
+    if (tip && tip.parentNode) tip.remove();
   }
+}
 
-  m.el.addEventListener('click', (e) => {
+function installPrompt(info) {
+  const l = info.latest;
+  const m = modal({
+    title: '更新已下载',
+    subtitle: `版本 ${l.version || l.stamp} 已下载并校验通过`,
+    body: `
+      <div class="callout ok">${icon('check-circle')}<div>现在更新会关掉窗口、替换程序并自动重启，大概几秒钟。</div></div>
+      ${l.notes ? `<p class="hint" style="margin-top:10px">${esc(l.notes)}</p>` : ''}`,
+    footer: `
+      <button class="btn ghost" data-k="up-later">稍后</button>
+      <button class="btn primary" data-k="up-now">${icon('refresh')}立即更新并重启</button>`,
+  });
+  m.el.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-k]');
     if (!b) return;
-    const k = b.dataset.k;
-    if (k === 'up-close') { clearInterval(poll); m.close(); }
-    if (k === 'up-recheck') check();
-    if (k === 'up-go') downloadAndApply();
+    if (b.dataset.k === 'up-later') { m.close(); return; }
+    if (b.dataset.k !== 'up-now') return;
+    setBusy(b, true, '更新中');
+    try {
+      const r = await (await fetch('/api/update/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sha256: l.sha256, stamp: l.stamp }),
+      })).json();
+      if (!r.ok) throw new Error(r.error || '更新失败');
+      m.close();
+      toast({ type: 'ok', title: '正在重启到新版本', text: '窗口会自己关掉再打开' });
+    } catch (err) {
+      setBusy(b, false);
+      toast({ type: 'err', title: '更新失败', text: err.message, duration: 8000 });
+      askReportError('update-apply: ' + String(err.message).slice(0, 60), err.message, '更新失败了：' + err.message);
+    }
   });
-
-  check();
-  return m;
 }
 
 /* ========================================================================== */

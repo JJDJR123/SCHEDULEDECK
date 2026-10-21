@@ -444,6 +444,32 @@ async function handler(req, res) {
       }
     }
 
+    if (p === '/api/report-error' && req.method === 'POST') {
+      // 同一个账号 + 同一个错误签名 → 一个文件：最多留 5 条样本，其余只累计次数
+      let body = {};
+      try { body = await readBody(req); } catch { body = {}; }
+      const signature = String((body && body.signature) || 'unknown').slice(0, 120);
+      const message = String((body && body.message) || '').slice(0, 2000);
+      const user = (String((body && body.user) || 'anonymous').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40)) || 'anonymous';
+      const dir = path.join(DATA, 'errors', user);
+      fs.mkdirSync(dir, { recursive: true });
+      const hash = crypto.createHash('sha1').update(signature).digest('hex').slice(0, 10);
+      const file = path.join(dir, hash + '.json');
+
+      let rec = null;
+      try { rec = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { rec = null; }
+      const now = new Date().toISOString();
+      if (!rec) rec = { signature, user, count: 0, firstAt: now, samples: [] };
+      rec.count = (rec.count || 0) + 1;
+      rec.lastAt = now;
+      rec.samples = Array.isArray(rec.samples) ? rec.samples : [];
+      if (rec.samples.length < 5) {
+        rec.samples.push({ at: now, message, version: appVersion().version || 'dev' });
+      }
+      fs.writeFileSync(file, JSON.stringify(rec, null, 2), 'utf8');
+      return send(res, 200, { ok: true, count: rec.count, samples: rec.samples.length });
+    }
+
     if (p === '/api/suggestion' && req.method === 'POST') {
       let body = {};
       try { body = await readBody(req); } catch { body = {}; }
@@ -501,12 +527,14 @@ async function handler(req, res) {
       try { body = await readBody(req); } catch { body = {}; }
       const url = String((body && body.url) || '').trim();
       if (!/^https?:\/\//i.test(url)) return send(res, 200, { ok: false, error: '更新地址不合法' });
+      if (updateState.phase === 'downloading') return send(res, 200, { ok: true, started: false, progress: updateState });
       const cfg = readJson(path.join(DATA, 'update.json'), {});
-      downloadUpdate(url, authHeaders(cfg)).then(
-        () => send(res, 200, { ok: true, progress: updateState }),
-        (e) => { updateState.phase = 'error'; updateState.error = e.message || String(e); send(res, 200, { ok: false, error: updateState.error }); },
-      );
-      return undefined;
+      // 立刻返回，下载在后台跑，进度用 /api/update/progress 轮询
+      downloadUpdate(url, authHeaders(cfg)).catch((e) => {
+        updateState.phase = 'error';
+        updateState.error = e.message || String(e);
+      });
+      return send(res, 200, { ok: true, started: true });
     }
 
     if (p === '/api/update/progress') {

@@ -790,7 +790,7 @@ export function initUI() {
   document.getElementById('viewRoot').addEventListener('change', onViewChange);
 
   document.getElementById('btnRefresh').addEventListener('click', () => window.__syncNow && window.__syncNow());
-  document.getElementById('btnUpdate').addEventListener('click', () => panels.openUpdate());
+  document.getElementById('btnUpdate').addEventListener('click', () => panels.checkUpdate({ manual: true }));
   document.getElementById('btnIdea').addEventListener('click', () => panels.openIdea());
   document.getElementById('btnBell').addEventListener('click', () => panels.openReminders());
   document.getElementById('btnSettings').addEventListener('click', () => panels.openSettings());
