@@ -459,8 +459,8 @@ async function handler(req, res) {
       const file = path.join(dir, stamp + '.txt');
       const when = new Date().toLocaleString('zh-CN', { hour12: false });
       // 纯文本：头三行是元信息，--- 之后是正文
+      // 只记时间和版本；是谁由文件夹名（账号）体现，正文里不写
       const content = [
-        '# 来自：' + name,
         '# 时间：' + when,
         '# 版本：' + (appVersion().version || 'dev'),
         '---',
@@ -479,7 +479,9 @@ async function handler(req, res) {
         return send(res, 200, { ok: false, error: '还没有配置更新地址', current: cur });
       }
       try {
-        const r = await fetch(manifestUrl, { headers: authHeaders(cfg) });
+        // 清单地址可能被 CDN 缓存，加个时间戳绕过去
+        const bust = manifestUrl + (manifestUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+        const r = await fetch(bust, { headers: authHeaders(cfg) });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const latest = await r.json();
         if (!latest || !latest.stamp || !latest.url) throw new Error('latest.json 缺字段');

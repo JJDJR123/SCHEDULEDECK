@@ -212,7 +212,8 @@ namespace ScheduleDeck
 
             var psi = new ProcessStartInfo();
             psi.FileName = nodePath;
-            psi.Arguments = Quote(Path.Combine(_appDir, "server.js")) + " --port " + port + " --data " + Quote(_dataDir);
+            // --use-system-ca：公司电脑常有 TLS 中间人证书，Node 自带 CA 不认，拉更新清单会失败
+            psi.Arguments = "--use-system-ca " + Quote(Path.Combine(_appDir, "server.js")) + " --port " + port + " --data " + Quote(_dataDir);
             psi.WorkingDirectory = _appDir;
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
@@ -573,8 +574,8 @@ namespace ScheduleDeck
 
         private static void OpenWindow()
         {
-            // 已经有窗口就把它叫到前面，别又开一个
-            if (FocusExistingWindow()) return;
+            // 每次启动都开一个指向当前端口的窗口：
+            // 旧窗口可能连着已经死掉的端口（重启后必然如此），不能聚焦它
             OpenAppWindow(_baseUrl);
         }
 
@@ -746,7 +747,7 @@ namespace ScheduleDeck
                     string port = File.ReadAllText(portFile).Trim();
                     if (port.Length > 0)
                     {
-                        if (FocusExistingWindow()) return;
+                        // 第二个实例：按 port.txt 里的端口再开一个窗口（不要聚焦可能已失效的旧窗口）
                         OpenAppWindow("http://127.0.0.1:" + port + "/");
                         return;
                     }

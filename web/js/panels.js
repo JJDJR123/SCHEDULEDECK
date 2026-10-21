@@ -258,7 +258,7 @@ export function openIdea() {
     <div class="field">
       <label>建议内容 <span class="opt">想到什么写什么，不用管格式</span></label>
       <textarea class="input" id="ideaText" spellcheck="false" placeholder="${esc(IDEA_HINT)}" style="height:260px;font-size:13px;line-height:1.7"></textarea>
-      <p class="hint">提交时会记下当前登录的飞书账号名和版本号，方便我找到人问细节。</p>
+      <p class="hint">提交时会带上当前版本号，方便定位是哪一版的问题。</p>
     </div>`;
 
   const footer = () => `

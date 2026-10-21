@@ -34,8 +34,20 @@ async function boot() {
   loadMyName();
   pushUpdateConfig();
   checkCredentials();
+  pullUpdateConfig();
   // 每次打开都检查一次更新（没配更新地址就不打扰）
   setTimeout(() => { if (state.settings.manifestUrl) panels.openUpdate(); }, 3800);
+}
+
+/** 磁盘上的 data/update.json 里可能有更新地址（比如手动配置文件），启动时补到设置里 */
+async function pullUpdateConfig() {
+  try {
+    const j = await (await fetch('/api/update-config', { cache: 'no-store' })).json();
+    if (j && j.ok && j.config && j.config.manifestUrl && !state.settings.manifestUrl) {
+      state.settings.manifestUrl = j.config.manifestUrl;
+      save();
+    }
+  } catch { /* 忽略 */ }
 }
 
 /** 本机还没填应用凭证时，开机提醒一次（只提醒，不拦着用） */
