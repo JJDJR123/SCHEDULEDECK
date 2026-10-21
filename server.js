@@ -1,0 +1,442 @@
+'use strict';
+/* 日程舱 — 本地服务（静态页面 + 飞书代理 + 本地存档） */
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const feishu = require('./feishu');
+
+const argv = process.argv.slice(2);
+const argOf = (name, def) => {
+  const i = argv.indexOf('--' + name);
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
+};
+
+const ROOT = __dirname;
+const WEB = path.join(ROOT, 'web');
+const DATA = path.resolve(argOf('data', path.join(ROOT, 'data')));
+const STATE_FILE = path.join(DATA, 'state.json');
+const CONFIG_FILE = path.join(DATA, 'config.json');
+const OAUTH_FILE = path.join(DATA, 'oauth.json');
+const OAUTH_PORT = Number(argOf('oauth-port', 17899)) || 17899;
+
+// 本人专用构建：没填凭证时自动用这一套（不要把带这个的 exe 发给别人）
+const DEFAULT_APP_ID = 'cli_aa5276c66d78dc10';
+const DEFAULT_APP_SECRET = 'REDACTED_SECRET';
+
+let oauthPortReady = false;
+let pendingState = '';
+
+fs.mkdirSync(DATA, { recursive: true });
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+function send(res, status, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store',
+  });
+  res.end(body);
+}
+
+function readJson(file, fallback) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+}
+
+function writeJson(file, obj) {
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+// 首次运行就把默认应用凭证写进本机配置，省得每次手填
+function ensureDefaultApp() {
+  const cfg = readJson(CONFIG_FILE, {});
+  let changed = false;
+  if (!cfg.appId) { cfg.appId = DEFAULT_APP_ID; changed = true; }
+  if (!cfg.appSecret) { cfg.appSecret = DEFAULT_APP_SECRET; changed = true; }
+  if (changed) writeJson(CONFIG_FILE, cfg);
+}
+
+function readBody(req, limit = 8 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error('请求体太大')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw) return resolve({});
+      try { resolve(JSON.parse(raw)); } catch { reject(new Error('JSON 格式错误')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function serveStatic(req, res, pathname) {
+  let rel = decodeURIComponent(pathname);
+  if (rel === '/' || rel === '') rel = '/index.html';
+  const file = path.normalize(path.join(WEB, rel));
+  if (!file.startsWith(path.normalize(WEB + path.sep))) {
+    res.writeHead(403); res.end('Forbidden'); return;
+  }
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Not found');
+      return;
+    }
+    const ext = path.extname(file).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    fs.createReadStream(file).pipe(res);
+  });
+}
+
+/* ------------------------------------------------------------------ 扫码登录 */
+
+function redirectUri() {
+  return `http://127.0.0.1:${OAUTH_PORT}/callback`;
+}
+
+function hostFromUrl(u) {
+  try { return new URL(u).hostname; } catch { return ''; }
+}
+
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+  ));
+}
+
+function oauthPage(res, ok, title, detail) {
+  const color = ok ? '#12B76A' : '#F04438';
+  const mark = ok ? '✓' : '!';
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>日程舱 · 飞书授权</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;height:100vh;display:grid;place-items:center;background:#F3F5F9;
+font-family:"Microsoft YaHei UI","Segoe UI",sans-serif;color:#151922}
+.card{background:#fff;border:1px solid #E6E9F1;border-radius:16px;padding:36px 40px;
+max-width:380px;text-align:center;box-shadow:0 20px 50px -20px rgba(16,24,40,.25)}
+.icon{width:48px;height:48px;border-radius:50%;background:${color};color:#fff;
+display:grid;place-items:center;font-size:26px;font-weight:700;margin:0 auto 16px}
+h1{font-size:18px;margin:0 0 8px}p{font-size:13px;color:#586175;line-height:1.7;margin:0}
+.hint{margin-top:14px;font-size:11.5px;color:#939CB0}
+</style></head><body><div class="card">
+<div class="icon">${mark}</div><h1>${escHtml(title)}</h1><p>${escHtml(detail)}</p>
+${ok ? '<p class="hint">窗口会自动关闭，也可以手动关闭后回到日程舱</p>' : ''}
+</div>${ok ? '<script>setTimeout(function(){window.close()},1500)</script>' : ''}
+</body></html>`;
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(html);
+}
+
+async function startOAuthServer() {
+  return new Promise((resolve) => {
+    const srv = http.createServer(async (req, res) => {
+      const u = new URL(req.url, 'http://127.0.0.1');
+      if (u.pathname !== '/callback') {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Not found');
+        return;
+      }
+      const err = u.searchParams.get('error');
+      const code = u.searchParams.get('code');
+      const state = u.searchParams.get('state');
+      if (err) return oauthPage(res, false, '授权未完成', err);
+      if (!state || !pendingState || state !== pendingState) {
+        return oauthPage(res, false, '校验失败', 'state 不匹配，请回到日程舱重新发起登录');
+      }
+      if (!code) return oauthPage(res, false, '缺少授权码', '请回到日程舱重新发起登录');
+
+      const cfg = readJson(CONFIG_FILE, {});
+      if (!cfg.appId || !cfg.appSecret) {
+        return oauthPage(res, false, '缺少应用凭证', '请先在日程舱填写 App ID / Secret');
+      }
+      try {
+        const j = await feishu.exchangeCode({
+          appId: cfg.appId,
+          appSecret: cfg.appSecret,
+          code,
+          redirectUri: redirectUri(),
+          host: cfg.host || 'feishu.cn',
+        });
+        const info = await feishu.getUserInfo(j.access_token, cfg.host || 'feishu.cn');
+        writeJson(OAUTH_FILE, {
+          access_token: j.access_token,
+          refresh_token: j.refresh_token || '',
+          expires_at: Date.now() + (Number(j.expires_in) || 7200) * 1000,
+          refresh_expires_at: j.refresh_token_expires_in
+            ? Date.now() + Number(j.refresh_token_expires_in) * 1000 : null,
+          scope: j.scope || '',
+          host: cfg.host || 'feishu.cn',
+          user: {
+            name: info.name || '',
+            avatar: info.avatar_url || '',
+            open_id: info.open_id || '',
+          },
+          at: Date.now(),
+        });
+        pendingState = '';
+        oauthPage(res, true, '登录成功', `${info.name || '飞书用户'}，现在可以回到日程舱读取表格了`);
+      } catch (e) {
+        oauthPage(res, false, '登录失败', e.message || String(e));
+      }
+    });
+    srv.once('error', (e) => {
+      oauthPortReady = false;
+      console.warn(`[oauth] 回调端口 ${OAUTH_PORT} 不可用: ${e.message}`);
+      resolve(null);
+    });
+    srv.listen(OAUTH_PORT, '127.0.0.1', () => {
+      oauthPortReady = true;
+      console.log(`[oauth] callback ${redirectUri()}`);
+      resolve(srv);
+    });
+  });
+}
+
+async function ensureUserToken() {
+  const cfg = readJson(CONFIG_FILE, {});
+  const o = readJson(OAUTH_FILE, null);
+  if (!o || !o.access_token) throw new Error('还没有登录飞书，请先扫码登录');
+  const left = (o.expires_at || 0) - Date.now();
+  if (left > 5 * 60 * 1000) return o.access_token;
+
+  if (!o.refresh_token) throw new Error('登录已过期，请重新扫码登录');
+  const j = await feishu.refreshUserToken({
+    appId: cfg.appId,
+    appSecret: cfg.appSecret,
+    refreshToken: o.refresh_token,
+    host: o.host || 'feishu.cn',
+  });
+  const next = {
+    ...o,
+    access_token: j.access_token,
+    refresh_token: j.refresh_token || o.refresh_token,
+    expires_at: Date.now() + (Number(j.expires_in) || 7200) * 1000,
+    scope: j.scope || o.scope || '',
+    at: Date.now(),
+  };
+  writeJson(OAUTH_FILE, next);
+  return next.access_token;
+}
+
+async function handler(req, res) {
+  const u = new URL(req.url, 'http://127.0.0.1');
+  const p = u.pathname;
+
+  try {
+    if (p === '/api/health') {
+      return send(res, 200, { ok: true, app: 'schedule-deck', version: '1.0.0', time: Date.now() });
+    }
+
+    if (p === '/api/state' && req.method === 'GET') {
+      const saved = readJson(STATE_FILE, null);
+      return send(res, 200, { ok: true, state: saved && saved.state ? saved.state : null });
+    }
+
+    if (p === '/api/state' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body || !body.state) return send(res, 400, { ok: false, error: '缺少 state' });
+      writeJson(STATE_FILE, { savedAt: Date.now(), state: body.state });
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/api/config' && req.method === 'GET') {
+      const cfg = readJson(CONFIG_FILE, {});
+      const o = readJson(OAUTH_FILE, null);
+      return send(res, 200, {
+        ok: true,
+        appId: cfg.appId || '',
+        hasSecret: !!cfg.appSecret,
+        url: cfg.url || '',
+        mode: cfg.mode || '',
+        loggedIn: !!(o && o.access_token),
+        user: o ? o.user : null,
+        callback: redirectUri(),
+      });
+    }
+
+    if (p === '/api/oauth/status' && req.method === 'GET') {
+      const o = readJson(OAUTH_FILE, null);
+      const cfg = readJson(CONFIG_FILE, {});
+      return send(res, 200, {
+        ok: true,
+        loggedIn: !!(o && o.access_token),
+        user: o ? o.user : null,
+        expiresAt: o ? o.expires_at : null,
+        scope: o ? o.scope : '',
+        appId: cfg.appId || '',
+        hasSecret: !!cfg.appSecret,
+        callback: redirectUri(),
+        callbackReady: oauthPortReady,
+      });
+    }
+
+    if (p === '/api/oauth/start' && req.method === 'POST') {
+      const body = await readBody(req);
+      const cfg = readJson(CONFIG_FILE, {});
+      const url = String(body.url || cfg.url || '').trim();
+      const appId = String(body.appId || cfg.appId || '').trim();
+      const appSecret = String(body.appSecret || cfg.appSecret || '').trim();
+      if (!appId || !appSecret) {
+        return send(res, 200, { ok: false, error: '先填 App ID 和 App Secret（应用「凭证与基础信息」里复制）' });
+      }
+      if (!oauthPortReady) {
+        return send(res, 200, { ok: false, error: `回调端口 ${OAUTH_PORT} 被占用，请关掉占用它的程序后重启日程舱` });
+      }
+      const host = hostFromUrl(url) || cfg.host || 'feishu.cn';
+      pendingState = crypto.randomBytes(16).toString('hex');
+      writeJson(CONFIG_FILE, { ...cfg, appId, appSecret, url: url || cfg.url || '', host, updatedAt: Date.now() });
+      const authUrl = feishu.buildAuthorizeUrl({
+        appId, redirectUri: redirectUri(), state: pendingState, host,
+      });
+      return send(res, 200, { ok: true, authUrl, callback: redirectUri() });
+    }
+
+    if (p === '/api/oauth/import' && req.method === 'POST') {
+      const body = await readBody(req);
+      const cfg = readJson(CONFIG_FILE, {});
+      const url = String(body.url || cfg.url || '').trim();
+      if (!url) return send(res, 200, { ok: false, error: '请先粘贴表格链接' });
+      try {
+        const token = await ensureUserToken();
+        const data = await feishu.load({ url, userToken: token });
+        writeJson(CONFIG_FILE, { ...cfg, url, mode: 'oauth', updatedAt: Date.now() });
+        return send(res, 200, { ok: true, data });
+      } catch (e) {
+        return send(res, 200, { ok: false, error: e.message || String(e), code: e.code || null });
+      }
+    }
+
+    if (p === '/api/oauth/logout' && req.method === 'POST') {
+      try { fs.unlinkSync(OAUTH_FILE); } catch { /* ignore */ }
+      return send(res, 200, { ok: true });
+    }
+
+    if (p === '/api/import' && req.method === 'POST') {
+      const body = await readBody(req);
+      const cfg = readJson(CONFIG_FILE, {});
+      const appId = String(body.appId || cfg.appId || '').trim();
+      const appSecret = String(body.appSecret || cfg.appSecret || '').trim();
+      const url = String(body.url || cfg.url || '').trim();
+
+      if (!url) return send(res, 200, { ok: false, error: '请先粘贴飞书表格链接' });
+      if (!appId || !appSecret) return send(res, 200, { ok: false, error: '缺少 App ID / App Secret，请展开下面的 6 步先建一个自建应用' });
+
+      try {
+        const data = await feishu.load({ url, appId, appSecret });
+        writeJson(CONFIG_FILE, {
+          appId, appSecret, url, mode: 'feishu', host: hostFromUrl(url), updatedAt: Date.now(),
+        });
+        return send(res, 200, { ok: true, data });
+      } catch (e) {
+        return send(res, 200, { ok: false, error: e.message || String(e), code: e.code || null });
+      }
+    }
+
+    if (p === '/api/sync' && req.method === 'POST') {
+      const cfg = readJson(CONFIG_FILE, {});
+      if (!cfg.url) {
+        return send(res, 200, { ok: false, error: '还没有保存表格链接，请先用「导入表格」连接一次' });
+      }
+      try {
+        let data;
+        if (cfg.mode === 'oauth') {
+          const token = await ensureUserToken();
+          data = await feishu.load({ url: cfg.url, userToken: token });
+        } else {
+          if (!cfg.appId || !cfg.appSecret) {
+            return send(res, 200, { ok: false, error: '还没有保存应用凭证，请先用「导入表格」连接一次' });
+          }
+          data = await feishu.load({ url: cfg.url, appId: cfg.appId, appSecret: cfg.appSecret });
+        }
+        writeJson(CONFIG_FILE, { ...cfg, updatedAt: Date.now() });
+        return send(res, 200, { ok: true, data });
+      } catch (e) {
+        return send(res, 200, { ok: false, error: e.message || String(e), code: e.code || null });
+      }
+    }
+
+    if (p === '/api/shutdown' && req.method === 'POST') {
+      send(res, 200, { ok: true });
+      setTimeout(() => process.exit(0), 120);
+      return undefined;
+    }
+
+    if (p.startsWith('/api/')) {
+      return send(res, 404, { ok: false, error: '未知接口' });
+    }
+
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405); res.end('Method not allowed'); return undefined;
+    }
+    return serveStatic(req, res, p);
+  } catch (e) {
+    return send(res, 500, { ok: false, error: e.message || '服务器错误' });
+  }
+}
+
+function listen(port) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(handler);
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve(server));
+  });
+}
+
+async function main() {
+  ensureDefaultApp();
+  const wanted = Number(argOf('port', 0)) || 0;
+  let server = null;
+
+  if (wanted) {
+    try { server = await listen(wanted); } catch { server = null; }
+  }
+  if (!server) {
+    for (const p of [17890, 17891, 17892, 17893, 17894, 17910, 17920]) {
+      try { server = await listen(p); break; } catch { /* try next */ }
+    }
+  }
+  if (!server) server = await listen(0);
+
+  const port = server.address().port;
+  fs.writeFileSync(path.join(DATA, 'port.txt'), String(port), 'utf8');
+  console.log(`[schedule-deck] ready http://127.0.0.1:${port}`);
+  await startOAuthServer();
+  console.log(`[schedule-deck] data dir ${DATA}`);
+
+  if (argv.includes('--open')) {
+    const { exec } = require('child_process');
+    exec(`start "" "http://127.0.0.1:${port}"`, { shell: 'cmd.exe' }, () => {});
+  }
+
+  process.on('SIGINT', () => process.exit(0));
+  process.on('SIGTERM', () => process.exit(0));
+}
+
+main().catch((e) => {
+  console.error('[schedule-deck] failed:', e);
+  process.exit(1);
+});

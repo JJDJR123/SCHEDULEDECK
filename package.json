@@ -1,0 +1,10 @@
+{
+  "name": "schedule-deck",
+  "version": "1.0.0",
+  "private": true,
+  "description": "日程舱 · 飞书表格驱动的 DDL 提醒与任务面板",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js --open"
+  }
+}

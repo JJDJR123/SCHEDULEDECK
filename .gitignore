@@ -1,0 +1,9 @@
+data/
+dist/
+shots/
+*.exe
+*.ico
+node_modules/
+tmp-*
+.chrome*
+.edge*
