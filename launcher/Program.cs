@@ -21,6 +21,7 @@ namespace ScheduleDeck
     internal static class Program
     {
         private static NotifyIcon _tray;
+        private static System.Windows.Forms.Timer _updateTimer;
         private static Process _node;
         private static string _baseUrl;
         private static string _appDir;
@@ -29,11 +30,13 @@ namespace ScheduleDeck
         private static Icon _appIcon;
         private static bool _noWindow;
         private static bool _packaged;
+        private static bool _autoInstall;
 
         [STAThread]
         private static void Main(string[] args)
         {
             _noWindow = Array.IndexOf(args, "--no-window") >= 0;
+            _autoInstall = Array.IndexOf(args, "--auto-update") >= 0;
 
             bool created;
             using (var mutex = new Mutex(true, "ScheduleDeck.App.v1", out created))
@@ -280,6 +283,7 @@ namespace ScheduleDeck
             var menu = new ContextMenuStrip();
             menu.Items.Add("打开日程舱", null, delegate { OpenWindow(); });
             menu.Items.Add("在默认浏览器中打开", null, delegate { Process.Start(_baseUrl); });
+            menu.Items.Add("检查更新…", null, delegate { CheckForUpdate(true); });
             menu.Items.Add("打开数据目录", null, delegate { Process.Start("explorer.exe", "\"" + _dataDir + "\""); });
             if (_packaged)
             {
@@ -289,6 +293,226 @@ namespace ScheduleDeck
             menu.Items.Add("退出", null, delegate { ExitApp(); });
             _tray.ContextMenuStrip = menu;
             _tray.DoubleClick += delegate { OpenWindow(); };
+            StartUpdateTimer();
+            if (_autoInstall) CheckForUpdate(false);
+        }
+
+        /* ---------------------------------------------------------------- 自动更新 */
+
+        private static string CurrentStamp()
+        {
+            try
+            {
+                using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream("Stamp.txt"))
+                {
+                    if (s == null) return "0";
+                    using (var r = new StreamReader(s, Encoding.UTF8))
+                    {
+                        string v = r.ReadToEnd().Trim();
+                        return v.Length > 0 ? v : "0";
+                    }
+                }
+            }
+            catch
+            {
+                return "0";
+            }
+        }
+
+        private static string ReadManifestUrl()
+        {
+            try
+            {
+                string file = Path.Combine(_dataDir, "update.json");
+                if (!File.Exists(file)) return "";
+                string text = File.ReadAllText(file, Encoding.UTF8);
+                var m = System.Text.RegularExpressions.Regex.Match(text, "\"manifestUrl\"\\s*:\\s*\"([^\"]*)\"");
+                if (!m.Success) return "";
+                return m.Groups[1].Value.Replace("\\/", "/").Trim();
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static bool ReadAutoUpdate()
+        {
+            try
+            {
+                string file = Path.Combine(_dataDir, "update.json");
+                if (!File.Exists(file)) return true;
+                string text = File.ReadAllText(file, Encoding.UTF8);
+                var m = System.Text.RegularExpressions.Regex.Match(text, "\"auto\"\\s*:\\s*(true|false)");
+                return !m.Success || m.Groups[1].Value == "true";
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        private static void StartUpdateTimer()
+        {
+            if (!_packaged) return;
+            if (!ReadAutoUpdate()) return;
+            if (ReadManifestUrl().Length == 0) return;
+
+            var later = new System.Windows.Forms.Timer();
+            later.Interval = 40000;
+            later.Tick += delegate
+            {
+                later.Stop();
+                later.Dispose();
+                CheckForUpdate(false);
+            };
+            later.Start();
+
+            _updateTimer = new System.Windows.Forms.Timer();
+            _updateTimer.Interval = 60 * 60 * 1000;
+            _updateTimer.Tick += delegate { CheckForUpdate(false); };
+            _updateTimer.Start();
+        }
+
+        private static string MatchValue(string text, string key)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                text, "\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
+            return m.Success ? m.Groups[1].Value.Replace("\\/", "/") : "";
+        }
+
+        private static void CheckForUpdate(bool manual)
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    string manifestUrl = ReadManifestUrl();
+                    if (manifestUrl.Length == 0)
+                    {
+                        if (manual)
+                        {
+                            MessageBox.Show(
+                                "还没配置更新地址。\n\n打开「设置 → 外观与数据 → 自动更新」，把 latest.json 的网址填进去。",
+                                "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
+                        return;
+                    }
+
+                    string text;
+                    var req = (HttpWebRequest)WebRequest.Create(manifestUrl);
+                    req.Timeout = 20000;
+                    req.Headers.Add("Cache-Control", "no-cache");
+                    using (var resp = (HttpWebResponse)req.GetResponse())
+                    using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                    {
+                        text = sr.ReadToEnd();
+                    }
+
+                    string stamp = MatchValue(text, "stamp");
+                    string version = MatchValue(text, "version");
+                    string url = MatchValue(text, "url");
+                    string sha = MatchValue(text, "sha256");
+                    string notes = MatchValue(text, "notes");
+                    if (stamp.Length == 0 || url.Length == 0)
+                    {
+                        if (manual) MessageBox.Show("latest.json 格式不对：至少要 version/stamp/url/sha256。", "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    string current = CurrentStamp();
+                    if (string.CompareOrdinal(stamp, current) <= 0)
+                    {
+                        if (manual)
+                        {
+                            MessageBox.Show("已经是最新版本了。（当前 " + current + "）", "检查更新",
+                                MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
+                        return;
+                    }
+
+                    string msg = "发现新版本 " + version + "（当前 " + current + "）"
+                        + (notes.Length > 0 ? "\n\n" + notes : "")
+                        + "\n\n现在下载并更新吗？更新时程序会自动重启。";
+                    if (!_autoInstall
+                        && MessageBox.Show(msg, "日程舱 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                    {
+                        return;
+                    }
+
+                    string tmp = Path.Combine(Path.GetTempPath(), "sd-update-" + Guid.NewGuid().ToString("N") + ".exe");
+                    using (var wc = new WebClient())
+                    {
+                        wc.Headers.Add("Cache-Control", "no-cache");
+                        wc.DownloadFile(url, tmp);
+                    }
+
+                    string got = Sha256File(tmp);
+                    if (sha.Length > 0 && !string.Equals(got, sha, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try { File.Delete(tmp); } catch { }
+                        MessageBox.Show("下载下来的文件校验不通过，已取消更新。\n\n期望 " + sha + "\n实际 " + got,
+                            "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+
+                    ApplyUpdate(tmp);
+                }
+                catch (Exception ex)
+                {
+                    if (manual)
+                    {
+                        MessageBox.Show("检查更新失败：" + ex.Message, "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+            });
+        }
+
+        private static string Sha256File(string path)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var fs = File.OpenRead(path))
+            {
+                byte[] hash = sha.ComputeHash(fs);
+                var sb = new StringBuilder();
+                foreach (byte b in hash) sb.Append(b.ToString("x2"));
+                return sb.ToString();
+            }
+        }
+
+        private static void ApplyUpdate(string newExe)
+        {
+            string exePath = Application.ExecutablePath;
+            string name = Path.GetFileName(exePath);
+            string log = Path.Combine(_dataDir, "update.log");
+            string bat = Path.Combine(Path.GetTempPath(), "sd-apply-" + Guid.NewGuid().ToString("N") + ".bat");
+
+            var sb = new StringBuilder();
+            sb.AppendLine("@echo off");
+            sb.AppendLine("chcp 936 >nul");
+            sb.AppendLine("echo [%date% %time%] 准备替换 >> \"" + log + "\"");
+            sb.AppendLine(":wait");
+            sb.AppendLine("tasklist /fi \"imagename eq " + name + "\" | find /i \"" + name + "\" >nul");
+            sb.AppendLine("if not errorlevel 1 (ping 127.0.0.1 -n 2 >nul & goto wait)");
+            sb.AppendLine("copy /y \"" + exePath + "\" \"" + exePath + ".bak\" >> \"" + log + "\" 2>&1");
+            sb.AppendLine("move /y \"" + newExe + "\" \"" + exePath + "\" >> \"" + log + "\" 2>&1");
+            sb.AppendLine("if errorlevel 1 (");
+            sb.AppendLine("  echo 替换失败，回滚 >> \"" + log + "\"");
+            sb.AppendLine("  copy /y \"" + exePath + ".bak\" \"" + exePath + "\" >> \"" + log + "\" 2>&1");
+            sb.AppendLine(")");
+            sb.AppendLine("echo [%date% %time%] 启动新版 >> \"" + log + "\"");
+            sb.AppendLine("start \"\" \"" + exePath + "\"");
+            sb.AppendLine("del \"%~f0\"");
+            // cmd 按系统 ANSI 读批处理，中文路径必须用 Default(GBK) 写
+            File.WriteAllText(bat, sb.ToString(), Encoding.Default);
+
+            var psi = new ProcessStartInfo("cmd.exe", "/c \"" + bat + "\"");
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.WindowStyle = ProcessWindowStyle.Hidden;
+            Process.Start(psi);
+
+            ExitApp();
         }
 
         private static Icon LoadIcon()

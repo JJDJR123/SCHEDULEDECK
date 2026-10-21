@@ -379,8 +379,29 @@ async function handler(req, res) {
         writeJson(CONFIG_FILE, { ...cfg, url: url || cfg.url || '', updatedAt: Date.now() });
         return send(res, 200, { ok: true, data });
       } catch (e) {
-        return send(res, 200, { ok: false, error: e.message || String(e), code: e.code || null });
+        const code = e.code || null;
+        console.log(`[sync] 失败 code=${code} url=${url} :: ${e.message || e}`);
+        return send(res, 200, { ok: false, error: e.message || String(e), code });
       }
+    }
+
+    if (p === '/api/update-config') {
+      // 自动更新配置：前端改，启动器读
+      const UPDATE_FILE = path.join(DATA, 'update.json');
+      if (req.method === 'GET') {
+        return send(res, 200, { ok: true, config: readJson(UPDATE_FILE, {}) });
+      }
+      let body = {};
+      try { body = await readBody(req); } catch { body = {}; }
+      const cur = readJson(UPDATE_FILE, {});
+      const next = {
+        ...cur,
+        manifestUrl: String(body.manifestUrl != null ? body.manifestUrl : cur.manifestUrl || '').trim(),
+        auto: body.auto != null ? !!body.auto : cur.auto !== false,
+        updatedAt: Date.now(),
+      };
+      writeJson(UPDATE_FILE, next);
+      return send(res, 200, { ok: true, config: next });
     }
 
     if (p === '/api/open-browser' && req.method === 'POST') {

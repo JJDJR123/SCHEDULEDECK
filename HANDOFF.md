@@ -67,7 +67,25 @@ git add -A; git commit -m "..."; git push
 - 期数已从 tags 拆出为独立「档期」列表（侧栏），点击筛选
 - 表头识别优先含「负责人/开始/完成/时间/周期/验收」的行；第一行含 ≥2 日期视为无表头
 
-## 6. 数据与凭证
+## 6. 自动更新
+
+发布一次新版本：
+
+1. `powershell -File build\build-single.ps1` 打包
+2. 把 `打包成品\日程舱.exe` 传到存储（私有 GitHub Release、OSS、任意能直链的地址都行）
+3. `powershell -File build\make-manifest.ps1 -Exe <exe路径> -Url <下载地址> -Notes "这次改了什么"` → 生成 `latest.json`（version / stamp / url / sha256 / size / notes）
+4. 用这个 `latest.json` 覆盖「更新地址」指向的文件
+
+客户端这边：
+
+- 设置 → 外观与数据 → **自动更新**，填 `latest.json` 的网址（留空 = 不检查；保存时会同步写进 `data/update.json` 给启动器读）
+- 托盘右键「**检查更新…**」手动查；开了自动更新的话启动 40 秒后查一次，之后每小时一次
+- 新旧判断用 exe 内嵌的 `Stamp.txt`（打包时间戳，单调递增），不依赖语义化版本号
+- 流程：弹窗确认 → 下载到 `%TEMP%` → **校验 sha256** → 写一个 bat → 程序退出 → bat 等进程退出 → 备份 `日程舱.exe.bak` → 替换 → 重启
+- `--auto-update` 参数可跳过确认直接装（无人值守 / 自测用）
+- 更新日志在 `data/update.log`
+
+## 7. 数据与凭证
 
 | 文件 | 内容 |
 | --- | --- |
@@ -83,14 +101,14 @@ git add -A; git commit -m "..."; git push
 
 单文件版优先把 `data` 放在 exe 同级，不可写则回落 `%LOCALAPPDATA%\ScheduleDeck\data`。
 
-## 7. 已知问题 / 待办
+## 8. 已知问题 / 待办
 
 - [ ] 方案 B 自动更新：私有 GitHub 源码 + 私有对象存储 `latest.json`（version/url/sha256），每小时检查、校验后退出替换重启
 - [ ] 档期异常格式（S1、第一赛季）归一；「全部/多选」的切回开关已有（`TAG_MULTI_SELECT`）
 - [ ] 行数超 5000 截断、超大表分批读取
 - [ ] 启动器 / node 生命周期联动：node 意外退出时启动器没感知（不提示、不重启）；反向强杀启动器会留下孤儿 node
 
-## 8. 血泪教训
+## 9. 血泪教训
 
 1. **禁止用 Windows PowerShell 5.1 的 `Get-Content`/`Set-Content` 批量改源码**：UTF-8 无 BOM 会被按 GBK 读，中文变 `?` 且不可逆。只能用 `edit` 工具或 Node `fs.readFileSync(p,'utf8')`。
 2. 编辑 `build/*.ps1` 后需补 UTF-8 **BOM**，否则 Windows PowerShell 解析中文失败。
@@ -101,15 +119,16 @@ git add -A; git commit -m "..."; git push
 7. 关 / 开 exe 的姿势：进程名 `日程舱.exe`，node 子进程父进程是它、端口写在 `data\port.txt`；`POST /api/shutdown` 只关 node，启动器不会自己退。
 8. **`loadState` 里要 `save()`，必须等所有字段都恢复完之后**：`save()` 序列化的是当前内存状态，若在 `state.overrides`/`settings` 还没从存档赋值时调用，会把空值写回磁盘（#20 踩过：重算角色时顺手保存，把完成状态清空，幸好当时没勾过）。
 
-## 9. 文档迭代规则
+## 10. 文档迭代规则
 
 - 本文超过 ~300 行，或话题发生代际变化（如更新器上线）时，新建 `HANDOFF-<序号>-<主题>.md`
 - 新文档开头保留：项目路径、当前版本、上一份文档链接、**未完成事项**
 - 旧文档不删除，只在其顶部标注「已被 XXX 取代」
 - 每次重要改动后追加到「变更记录」并 commit
 
-## 10. 变更记录
+## 11. 变更记录
 
+- 2026-10-22：#27 同步失败排查：`/api/sync` 出错时写日志（`server.log` 里的 `[sync] 失败 ...`），前端失败自动重试一次、提示里带错误码；新增**自动更新**（manifest + sha256 + 备份替换重启、托盘「检查更新…」、每小时检查、`--auto-update`），配套 `build/make-manifest.ps1`
 - 2026-10-22：#26 「自己负责的那块」卡片上色：`settings.myColor`（默认 #5B5BF0），设置 → 外观与数据里有 8 个预设色 + 自定义取色器；颜色通过 CSS 变量 `--my-color` 落到 `.track.mine`
 - 2026-10-22：#25 修侧栏数据源按钮点了没反应（`+` / 切源 / 删除 的 data-act 只挂在主区域监听上，侧栏没接）；修 `openImport({asNew})` 被当成 tab 参数（加号打开的是「示例」页且不会新建源）；二次启动 exe 不再丢给默认浏览器——先聚焦已有应用窗口，没有才新开 `--app` 窗口；设置里加「在浏览器中打开」（`/api/open-browser`）；新增 `settings.syncOnSwitch`（默认关，切源只用缓存）
 - 2026-10-22：#24 多数据源（`state.sources[]` + `activeId`，侧栏卡片切换/新增/移除；记录 id 带数据源前缀；老存档自动迁移）；`/api/sync` 改为前端传 url，避免同步成上次导入的那张表

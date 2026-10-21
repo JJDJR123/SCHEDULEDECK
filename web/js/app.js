@@ -32,6 +32,19 @@ async function boot() {
   updateNotifyHint();
   setTimeout(autoSync, 2600);
   loadMyName();
+  pushUpdateConfig();
+}
+
+/** 把「自动更新地址」同步给启动器（它读 data/update.json） */
+async function pushUpdateConfig() {
+  try {
+    if (!state.settings.manifestUrl) return;
+    await fetch('/api/update-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manifestUrl: state.settings.manifestUrl }),
+    });
+  } catch { /* 离线就算了 */ }
 }
 
 async function loadMyName() {

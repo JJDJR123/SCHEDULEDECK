@@ -40,6 +40,7 @@ export const DEFAULT_SETTINGS = {
   fillDown: true,
   syncOnSwitch: false,
   myColor: '#5B5BF0',
+  manifestUrl: '',
 };
 
 export const DEFAULT_SCHEDULE = {

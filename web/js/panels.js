@@ -664,6 +664,11 @@ export function openSettings(tab = 'source') {
         </div>
       </div>
       <div class="field" style="margin-top:20px">
+        <label>自动更新 <span class="opt">latest.json 的网址</span></label>
+        <input class="input" data-k="manifest-url" value="${esc(state.settings.manifestUrl || '')}" placeholder="https://你的存储/latest.json" />
+        <p class="hint">留空 = 不检查。填好后：托盘右键「检查更新…」手动查，或每小时自动查一次；发现新版本会弹窗确认，下载后校验 sha256 再替换重启。生成清单用 <code>build/make-manifest.ps1</code>。</p>
+      </div>
+      <div class="field" style="margin-top:20px">
         <label>数据</label>
         <div class="row">
           <button class="btn ghost" data-k="export">${icon('download')}导出备份 JSON</button>
@@ -788,6 +793,19 @@ export function openSettings(tab = 'source') {
       toast({ type: 'ok', title: '字段映射已更新', text: `当前共 ${state.records.length} 条任务` });
     }
     if (k === 'digest') { state.settings.dailyDigest = t.value; save(); }
+    if (k === 'manifest-url') {
+      state.settings.manifestUrl = t.value.trim();
+      save();
+      // 启动器读的是 data/update.json，这里同步过去
+      fetch('/api/update-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manifestUrl: state.settings.manifestUrl }),
+      }).then((r) => r.json()).then((j) => {
+        toast(j.ok ? { type: 'ok', title: '更新地址已保存', text: j.config.manifestUrl || '（已清空，不再检查更新）' }
+          : { type: 'err', title: '保存失败', text: j.error || '' });
+      }).catch(() => {});
+    }
     if (k === 'base-date') {
       state.schedule.baseDate = t.value;
       rebuild(); save(); refresh(); h.setBody(body());
