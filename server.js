@@ -431,6 +431,30 @@ async function handler(req, res) {
       }
     }
 
+    if (p === '/api/suggestion' && req.method === 'POST') {
+      let body = {};
+      try { body = await readBody(req); } catch { body = {}; }
+      const name = String((body && body.name) || '').trim();
+      if (!name) return send(res, 200, { ok: false, error: '缺少名字' });
+      const raw = body && body.suggestion;
+      const text = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
+      if (!text || text.length > 200 * 1024) return send(res, 200, { ok: false, error: '内容为空或太大' });
+
+      const safe = name.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40) || 'anonymous';
+      const dir = path.join(DATA, 'suggestions', safe);
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const file = path.join(dir, stamp + '.json');
+      const record = {
+        from: name,
+        at: new Date().toISOString(),
+        app: appVersion(),
+        suggestion: typeof raw === 'string' ? raw : raw,
+      };
+      fs.writeFileSync(file, JSON.stringify(record, null, 2), 'utf8');
+      return send(res, 200, { ok: true, path: `data/suggestions/${safe}/${stamp}.json`, file });
+    }
+
     if (p === '/api/update/check') {
       const cfg = readJson(path.join(DATA, 'update.json'), {});
       const manifestUrl = String(cfg.manifestUrl || '').trim();

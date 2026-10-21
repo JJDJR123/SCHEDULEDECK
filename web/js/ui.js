@@ -769,6 +769,7 @@ export function initUI() {
 
   document.getElementById('btnRefresh').addEventListener('click', () => window.__syncNow && window.__syncNow());
   document.getElementById('btnUpdate').addEventListener('click', () => panels.openUpdate());
+  document.getElementById('btnIdea').addEventListener('click', () => panels.openIdea());
   document.getElementById('btnBell').addEventListener('click', () => panels.openReminders());
   document.getElementById('btnSettings').addEventListener('click', () => panels.openSettings());
   document.getElementById('btnImport').addEventListener('click', () => panels.openImport());

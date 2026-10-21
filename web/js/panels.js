@@ -213,6 +213,79 @@ export function openRow(rowIndex) {
 }
 
 /* ========================================================================== */
+/* 提建议                                                                     */
+/* ========================================================================== */
+
+const IDEA_TEMPLATE = {
+  title: '',
+  type: '功能建议',
+  priority: '中',
+  content: '',
+  scene: '',
+};
+
+export function openIdea() {
+  const me = String(state.settings.myName || '').trim();
+  const m = modal({
+    title: '我有个想法 🤓👆',
+    subtitle: '写清楚想解决什么，比写「加个功能」有用得多',
+    body: '',
+    footer: '',
+  });
+
+  const body = () => `
+    <div class="field">
+      <label>你的名字 <span class="opt">用来分文件夹存档</span></label>
+      <input class="input" id="ideaName" value="${esc(me || '')}" placeholder="例如：杨浩源" />
+    </div>
+    <div class="field">
+      <label>建议内容 <span class="opt">默认是 JSON，也可以直接写一段话</span></label>
+      <textarea class="input" id="ideaText" spellcheck="false" style="height:220px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.6">${esc(JSON.stringify(IDEA_TEMPLATE, null, 2))}</textarea>
+      <p class="hint">title 一句话概括、type 功能建议/体验问题/bug、content 具体想要什么、scene 什么场景下想到的。</p>
+    </div>`;
+
+  const footer = () => `
+    <span class="hint" style="flex:1">存在本机 <code>data/suggestions/&lt;名字&gt;/</code>，可以随时用脚本收进仓库「建议」文件夹</span>
+    <button class="btn ghost" data-k="idea-cancel">取消</button>
+    <button class="btn primary" data-k="idea-send">提交建议</button>`;
+
+  m.setBody(body());
+  m.setFooter(footer());
+
+  m.el.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-k]');
+    if (!b) return;
+    const k = b.dataset.k;
+    if (k === 'idea-cancel') { m.close(); return; }
+    if (k !== 'idea-send') return;
+
+    const name = (m.el.querySelector('#ideaName').value || '').trim();
+    const raw = (m.el.querySelector('#ideaText').value || '').trim();
+    if (!name) { toast({ type: 'warn', title: '先写上名字' }); return; }
+    if (!raw) { toast({ type: 'warn', title: '还没写内容' }); return; }
+
+    let payload = null;
+    try { payload = JSON.parse(raw); } catch { payload = { content: raw }; }
+
+    setBusy(b, true, '提交中');
+    try {
+      const r = await (await fetch('/api/suggestion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, suggestion: payload }),
+      })).json();
+      if (!r.ok) throw new Error(r.error || '提交失败');
+      m.close();
+      toast({ type: 'ok', title: '建议已收下', text: r.path || '' });
+    } catch (err) {
+      toast({ type: 'err', title: '提交失败', text: err.message, duration: 8000 });
+    } finally {
+      setBusy(b, false);
+    }
+  });
+}
+
+/* ========================================================================== */
 /* 检查更新                                                                   */
 /* ========================================================================== */
 
