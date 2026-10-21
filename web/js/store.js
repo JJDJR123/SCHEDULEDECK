@@ -112,6 +112,7 @@ export const state = {
   ui: { view: 'overview' },
   reminders: { fired: {} },
   records: [],
+  rowCards: [],
   byId: new Map(),
 };
 
@@ -175,7 +176,26 @@ export const isMonthDay = (v) => MONTH_DAY.test(String(v ?? '').trim());
 export const isDoneText = (v) => String(v ?? '').trim() === '完成';
 
 /** 识别算法版本：升级后老存档会按新规则重算角色（见 loadState） */
-export const DETECT_VERSION = 2;
+export const DETECT_VERSION = 3;
+
+/** 表头 → 阶段主语：动作开始 → 动作、配置完成 → 配置、音效/图标 → 音效 */
+export function subjectOf(header) {
+  const s = String(header ?? '')
+    .replace(/[（(][^)）]*[)）]/g, '')
+    .replace(/\s+/g, '')
+    .replace(/[\/、,，].*$/, '')
+    .replace(/(开始|结束|完成|时间|日期|需求|排期|周期)/g, '')
+    .trim();
+  if (!s || /^列\d+$/.test(s) || /^\d+$/.test(s)) return '';
+  return s;
+}
+
+/** 阶段主语 → 岗位（表里没有「配置负责人」，配置这件事归策划） */
+const SUBJECT_ALIAS = { 配置: '策划', 收尾: '验收' };
+/** 没有负责人列、但确实是独立工种的阶段 */
+const TRACK_RE = /音效|配乐|音频|立绘|奥义图|图标/;
+/** 更像是节点/老板查看，不算岗位 */
+const MILESTONE_RE = /验收|上线|发布|审核|需求/;
 
 /**
  * 角色名从「负责人」表头里取：策划负责人 → 策划、特效负责人 → 特效。
@@ -225,22 +245,74 @@ export function detectSchedule(headers, rows) {
     && c.avgLen <= 8);
 
   const roles = [];
-  for (const c of nameCols) {
-    const dateCols = [];
-    for (let j = c.i + 1; j < width && dateish[j]; j++) dateCols.push(j);
-    if (dateCols.length >= 1) {
-      roles.push({
-        key: 'r' + roles.length,
-        name: roleName(headers[c.i], roles.length),
-        ownerCol: c.i,
-        dateCols,
+  const milestones = [];
+  const ownerCols = nameCols.filter((c) => /负责人|执行人|处理人|责任人/i.test(headers[c.i] || ''));
+
+  if (ownerCols.length) {
+    // 先按「负责人」列起岗位，再按表头语义把日期列分给对应岗位
+    ownerCols.sort((a, b) => a.i - b.i).forEach((c, i) => {
+      roles.push({ key: 'r' + i, name: roleName(headers[c.i], i), ownerCol: c.i, dateCols: [] });
+    });
+
+    const findRole = (subject) => {
+      const s = SUBJECT_ALIAS[subject] || subject;
+      if (!s) return null;
+      return roles.find((r) => r.name === s)
+        || roles.find((r) => r.name && (r.name.includes(s) || s.includes(r.name)))
+        || null;
+    };
+
+    cols.forEach((c) => {
+      if (!dateish[c.i]) return;
+      const header = headers[c.i] || '';
+      const subject = subjectOf(header);
+      if (!subject) return;                      // 「上线日」这类没有主语，留给 releaseCol
+
+      const hit = findRole(subject);
+      if (hit) { hit.dateCols.push(c.i); return; }
+
+      if (TRACK_RE.test(subject) && !MILESTONE_RE.test(header)) {
+        // 音效这类没有负责人列，但确实是独立工种 → 自成一个岗位
+        let t = roles.find((r) => r.ownerCol < 0 && r.name === subject);
+        if (!t) {
+          t = { key: 'r' + roles.length, name: subject, ownerCol: -1, dateCols: [] };
+          roles.push(t);
+        }
+        t.dateCols.push(c.i);
+        return;
+      }
+
+      // 模型 / 原画 / 收尾验收 → 卡片上的节点，不当岗位
+      milestones.push({
+        key: 'm' + milestones.length,
+        name: header.replace(/(完成|时间|日期)$/, '') || subject,
+        dateCols: [c.i],
       });
+    });
+  } else {
+    // 没有「负责人」表头：退回老规矩，低基数文本列 + 紧跟其后的连续日期列
+    for (const c of nameCols) {
+      const dateCols = [];
+      for (let j = c.i + 1; j < width && dateish[j]; j++) dateCols.push(j);
+      if (dateCols.length >= 1) {
+        roles.push({
+          key: 'r' + roles.length,
+          name: roleName(headers[c.i], roles.length),
+          ownerCol: c.i,
+          dateCols,
+        });
+      }
     }
   }
-  if (roles.length < 2) return null;
 
-  const used = new Set(roles.flatMap((r) => [r.ownerCol, ...r.dateCols]));
-  const before = cols.filter((c) => !used.has(c.i) && c.i < roles[0].ownerCol);
+  if (roles.filter((r) => r.dateCols.length).length < 2) return null;
+
+  const used = new Set([
+    ...roles.flatMap((r) => (r.ownerCol >= 0 ? [r.ownerCol] : []).concat(r.dateCols)),
+    ...milestones.flatMap((m) => m.dateCols),
+  ]);
+  const firstOwner = roles.find((r) => r.ownerCol >= 0);
+  const before = cols.filter((c) => !used.has(c.i) && (!firstOwner || c.i < firstOwner.ownerCol));
   const titleCol = before
     .filter((c) => c.texts.length >= Math.max(5, rows.length * 0.4) && c.avgLen >= 2)
     .sort((a, b) => b.texts.length - a.texts.length)[0]?.i ?? -1;
@@ -253,7 +325,8 @@ export function detectSchedule(headers, rows) {
     phaseCol,
     titleCol,
     releaseCol,
-    roles,
+    roles: roles.filter((r) => r.dateCols.length),
+    milestones,
   };
 }
 
@@ -356,6 +429,7 @@ function isDoneStatus(status) {
 export function rebuild() {
   state.records = [];
   state.byId = new Map();
+  state.rowCards = [];
   if (!state.table) return;
   if (state.schedule && state.schedule.enabled) rebuildSchedule();
   else rebuildGeneric();
@@ -366,42 +440,59 @@ function rebuildSchedule() {
   const S = state.schedule;
   const baseTs = S.baseDate ? new Date(S.baseDate + 'T00:00:00').getTime() : Date.now();
   const rows = state.table.rows;
+  const roles = (S.roles || []).filter((r) => r.dateCols && r.dateCols.length);
+  const milestones = S.milestones || [];
 
   rows.forEach((row, idx) => {
     const content = S.titleCol >= 0 ? String(row[S.titleCol] ?? '').trim() : '';
     const phase = S.phaseCol >= 0 ? String(row[S.phaseCol] ?? '').trim() : '';
     const release = S.releaseCol >= 0 ? String(row[S.releaseCol] ?? '').trim() : '';
+    const recs = [];
 
-    S.roles.forEach((role) => {
-      const ownerRaw = String(row[role.ownerCol] ?? '').trim();
-      if (!ownerRaw) return;
-      const owners = ownerRaw.split(/[、,，/\\\s]+/).map((x) => x.trim()).filter(Boolean);
+    roles.forEach((role) => {
+      const hasOwnerCol = role.ownerCol >= 0;
+      const ownerRaw = hasOwnerCol ? String(row[role.ownerCol] ?? '').trim() : '';
+      if (hasOwnerCol && !ownerRaw) return;
 
+      // 该岗位的开始 / 截止：取这一组日期列里最早与最晚的可解析日期
+      let startRaw = '';
       let dueRaw = '';
       let done = false;
-      for (let k = role.dateCols.length - 1; k >= 0; k--) {
-        const v = String(row[role.dateCols[k]] ?? '').trim();
-        if (!v) continue;
-        if (isDoneText(v)) { done = true; continue; }
-        if (isMonthDay(v)) { dueRaw = v; break; }
-      }
+      role.dateCols.forEach((ci) => {
+        const v = String(row[ci] ?? '').trim();
+        if (!v) return;
+        if (isDoneText(v)) { done = true; return; }
+        if (!isMonthDay(v)) return;
+        if (!startRaw) startRaw = v;
+        dueRaw = v;
+      });
+      // 没有负责人列（音效）时，没有日期就不出任务
+      if (!hasOwnerCol && !startRaw && !done) return;
+
+      const owners = ownerRaw
+        ? ownerRaw.split(/[、,，/\\\s]+/).map((x) => x.trim()).filter(Boolean)
+        : [];
       const due = dueRaw ? parseMonthDay(dueRaw, baseTs) : null;
+      const start = startRaw ? parseMonthDay(startRaw, baseTs) : null;
       const id = `s${idx}:${role.key}`;
       const ov = state.overrides[id] || {};
       const isDone = (ov.done != null ? !!ov.done : done) || false;
 
-      state.records.push({
+      recs.push({
         id,
         rowIndex: idx,
         raw: row,
         title: content || `${role.name}任务 ${idx + 1}`,
         due,
         dueRaw,
+        start,
+        startRaw,
         status: done ? '完成' : '',
         tags: [role.name].filter(Boolean),
         priority: '',
         owner: owners[0] || ownerRaw,
         owners,
+        ownerless: !hasOwnerCol,
         note: release ? `上线 ${release}` : '',
         done: isDone,
         doneAt: ov.doneAt || null,
@@ -411,6 +502,23 @@ function rebuildSchedule() {
         roleName: role.name,
         phase,
       });
+    });
+
+    if (!recs.length) return;
+    state.records.push(...recs);
+    state.rowCards.push({
+      rowIndex: idx,
+      title: content || `第 ${idx + 1} 行`,
+      phase,
+      release,
+      releaseTs: release ? parseMonthDay(release, baseTs) : null,
+      recs,
+      milestones: milestones
+        .map((m) => {
+          const raw = String(row[m.dateCols[0]] ?? '').trim();
+          return { name: m.name, raw, due: isMonthDay(raw) ? parseMonthDay(raw, baseTs) : null };
+        })
+        .filter((m) => m.raw),
     });
   });
 }
@@ -551,6 +659,88 @@ export function filteredRecords({ ignoreBucket = false } = {}) {
   return list;
 }
 
+/* ------------------------------------------------------------------ 按内容合并的卡片 */
+
+/** 当前用户是否负责这条记录 —— 表格是老板和各岗位维护的，只允许勾自己的部分 */
+export function canEdit(rec) {
+  const me = String(state.settings.myName || '').trim();
+  if (!me || !rec) return false;
+  if (rec.ownerless) return false;
+  const owners = rec.owners && rec.owners.length ? rec.owners : [rec.owner];
+  return owners.some((o) => o && (o.includes(me) || me.includes(o)));
+}
+
+/**
+ * 列表用：一行内容一张卡，把动作 / 特效 / 策划（以及音效、验收节点）摊在同一张卡上。
+ * 未选具体岗位时用它；选了岗位就退回 filteredRecords()。
+ */
+export function rowCardList({ ignoreBucket = false } = {}) {
+  const now = Date.now();
+  const f = state.filters;
+  const q = f.q.trim().toLowerCase();
+  const me = String(state.settings.myName || '').trim();
+  const onlyRole = f.role && f.role !== 'all' ? f.role : '';
+
+  let cards = (state.rowCards || []).map((card) => ({
+    ...card,
+    recs: onlyRole ? card.recs.filter((r) => r.roleKey === onlyRole) : card.recs,
+  })).filter((c) => c.recs.length);
+
+  cards.forEach((c) => {
+    const open = c.recs.filter((r) => !r.done);
+    const pool = open.length ? open : c.recs;
+    const withDue = pool.filter((r) => r.due != null);
+    const pick = withDue.slice().sort((a, b) => a.due - b.due)[0] || pool[0] || null;
+    c.due = pick && pick.due != null ? pick.due : null;
+    c.dueRec = pick;
+    c.done = c.recs.every((r) => r.done);
+    c.doneCount = c.recs.filter((r) => r.done).length;
+    c.mine = !!me && c.recs.some((r) => canEdit(r));
+  });
+
+  if (f.tags.length) cards = cards.filter((c) => c.recs.some((r) => r.tags.some((t) => f.tags.includes(t))));
+  if (f.phase) cards = cards.filter((c) => c.phase === f.phase);
+  if (f.mine && me) cards = cards.filter((c) => c.mine);
+  if (f.statuses.length) cards = cards.filter((c) => c.recs.some((r) => f.statuses.includes(r.status)));
+  if (f.priority.length) cards = cards.filter((c) => c.recs.some((r) => f.priority.includes(r.priority)));
+  if (q) {
+    cards = cards.filter((c) => {
+      const hay = [
+        c.title, c.phase, c.release,
+        ...c.recs.flatMap((r) => [r.owner, (r.owners || []).join(' '), r.roleName, r.note]),
+        ...c.milestones.map((m) => m.name),
+      ].join(' ').toLowerCase();
+      return q.split(/\s+/).every((w) => hay.includes(w));
+    });
+  }
+
+  if (!ignoreBucket) {
+    switch (f.bucket) {
+      case 'overdue': cards = cards.filter((c) => !c.done && c.due != null && c.due < now); break;
+      case 'today': cards = cards.filter((c) => !c.done && c.due != null && sameDay(c.due, now)); break;
+      case 'week': {
+        const a = startOfWeek(now, state.settings.weekStart);
+        const b = addDays(a, 7);
+        cards = cards.filter((c) => !c.done && c.due != null && c.due >= a && c.due < b);
+        break;
+      }
+      case 'undone': cards = cards.filter((c) => !c.done); break;
+      case 'done': cards = cards.filter((c) => c.done); break;
+      default: break;
+    }
+    if (!state.settings.showDone && f.bucket !== 'done') cards = cards.filter((c) => !c.done);
+  }
+
+  cards.sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    if (a.due == null && b.due == null) return a.rowIndex - b.rowIndex;
+    if (a.due == null) return 1;
+    if (b.due == null) return -1;
+    return a.due - b.due;
+  });
+  return cards;
+}
+
 export function computeStats() {
   const now = Date.now();
   const open = state.records.filter((r) => !r.done);
@@ -577,13 +767,16 @@ export function computeStats() {
 
 export function toggleDone(id) {
   const rec = state.byId.get(id);
-  if (!rec) return;
+  if (!rec) return false;
+  // 排期表：只能勾自己负责的那一块，别人的进度不在这里改
+  if (state.schedule && state.schedule.enabled && !canEdit(rec)) return false;
   const ov = state.overrides[id] || {};
   const next = !rec.done;
   state.overrides[id] = { ...ov, done: next, doneAt: next ? Date.now() : null };
   rec.done = next;
   rec.doneAt = state.overrides[id].doneAt;
   save();
+  return true;
 }
 
 export function setOverride(id, patch) {
@@ -707,6 +900,7 @@ export function clearAll() {
   state.schedule = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
   state.overrides = {};
   state.records = [];
+  state.rowCards = [];
   state.byId = new Map();
   state.filters = { q: '', bucket: 'all', tags: [], statuses: [], priority: [], mine: false, role: 'all' };
   state.reminders = { fired: {} };

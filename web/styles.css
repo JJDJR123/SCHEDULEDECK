@@ -527,6 +527,37 @@ a:hover { text-decoration: underline; }
 }
 .task-side { display: flex; align-items: center; gap: 2px; flex: none; opacity: .58; transition: opacity .15s; }
 .task:hover .task-side { opacity: 1; }
+
+/* 合并卡：一行内容里每个岗位一块 --------------------------------------------- */
+.tracks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.track {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 9px; border-radius: 8px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  font-size: 11.4px; color: var(--text-2); white-space: nowrap;
+  min-width: 0;
+}
+.track-role { font-weight: 600; color: var(--text); }
+.track-owner { color: var(--text-2); }
+.track-owner::before { content: "·"; margin-right: 3px; color: var(--line-strong); }
+.track-dates { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.track-dates::before { content: "·"; margin-right: 3px; color: var(--line-strong); }
+.track.mine { cursor: pointer; border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); }
+.track.mine:hover { background: var(--accent-soft); border-color: var(--accent); }
+.track-check { display: none; width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--line-strong); place-items: center; color: transparent; }
+.track-check .i { width: 9px; height: 9px; stroke-width: 3; }
+.track.mine .track-check { display: grid; }
+.track.mine:hover .track-check { border-color: var(--accent); color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.track.done { opacity: .62; }
+.track.done .track-role, .track.done .track-owner, .track.done .track-dates { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-3) 65%, transparent); }
+.track.done .track-check { display: grid; background: var(--accent); border-color: var(--accent); color: #fff; }
+.track.ownerless { background: transparent; border-style: dashed; }
+.track.milestone { background: transparent; border-style: dotted; color: var(--text-3); }
+.track.milestone .track-role { font-weight: 500; color: var(--text-3); }
+.release-chip { color: var(--text-3); }
+
+[data-theme="dark"] .track { background: var(--panel-3); }
+[data-theme="dark"] .track.ownerless, [data-theme="dark"] .track.milestone { background: transparent; }
 .icon-btn {
   width: 28px; height: 28px; border: 0; border-radius: 7px;
   background: transparent; color: var(--text-3);

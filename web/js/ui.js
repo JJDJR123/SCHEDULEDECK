@@ -1,7 +1,7 @@
-﻿/* 日程舱 — 主界面渲染 */
+/* 日程舱 — 主界面渲染 */
 import {
-  state, setView, setFilter, resetFilters, toggleDone, filteredRecords,
-  tagCounts, computeStats, save, DEFAULT_RULES, phaseList,
+  state, setView, setFilter, resetFilters, toggleDone, filteredRecords, rowCardList,
+  tagCounts, computeStats, save, DEFAULT_RULES, phaseList, canEdit,
 } from './store.js';
 import { evalRules, resolveStyle, styleVars, describeRule, sampleRecord } from './rules.js';
 import { icon, toast } from './kit.js';
@@ -283,9 +283,12 @@ function demoBanner() {
 
 function bucketCounts() {
   const now = Date.now();
-  const c = { all: state.records.length, today: 0, week: 0, overdue: 0, undone: 0, done: 0 };
+  const c = { all: 0, today: 0, week: 0, overdue: 0, undone: 0, done: 0 };
   const ws = startOfWeek(now, state.settings.weekStart);
-  state.records.forEach((r) => {
+  // 合并模式下按「内容」计数，和列表里的卡片数对得上
+  const list = mergedMode() ? rowCardList({ ignoreBucket: true }) : state.records;
+  c.all = list.length;
+  list.forEach((r) => {
     if (r.done) { c.done++; return; }
     c.undone++;
     if (r.due == null) return;
@@ -350,15 +353,24 @@ function toolbar() {
     <button class="chip" data-act="clear-filters">清除筛选</button></div></div>` : ''}`;
 }
 
+/** 没选具体岗位时：一行内容一张卡，所有岗位摊在同一张卡上 */
+function mergedMode() {
+  return !!(state.schedule && state.schedule.enabled
+    && Array.isArray(state.schedule.roles) && state.schedule.roles.length
+    && (state.filters.role || 'all') === 'all'
+    && Array.isArray(state.rowCards) && state.rowCards.length);
+}
+
 function viewTasks() {
-  const list = filteredRecords();
+  const merged = mergedMode();
+  const list = merged ? rowCardList() : filteredRecords();
   const now = Date.now();
   const groups = [];
   const map = new Map();
-  list.forEach((rec) => {
-    const key = rec.done ? 'done' : bucketOf(rec.due, now);
+  list.forEach((item) => {
+    const key = item.done ? 'done' : bucketOf(item.due, now);
     if (!map.has(key)) { map.set(key, []); groups.push(key); }
-    map.get(key).push(rec);
+    map.get(key).push(item);
   });
   const order = ['overdue', 'today', 'tomorrow', 'week', 'later', 'none', 'done'];
   const ordered = order.filter((k) => map.has(k));
@@ -375,12 +387,69 @@ function viewTasks() {
             <span class="group-count">${items.length}</span>
             <span class="group-line"></span>
           </div>
-          <div class="task-list">${items.map((r) => taskCard(r, now)).join('')}</div>
+          <div class="task-list">${items.map((r) => (merged ? rowCard(r, now) : taskCard(r, now))).join('')}</div>
         </section>`;
     }).join('')
     : emptyState();
 
   return `<div class="view">${demoBanner()}${toolbar()}${body}</div>`;
+}
+
+/** 一个岗位的进度块：动作 · 李琰琰 · 10/24→10/31 */
+function trackChip(rec, now) {
+  const editable = canEdit(rec);
+  const dates = rec.start != null && rec.due != null && rec.start !== rec.due
+    ? `${fmtShort(rec.start, now)}→${fmtShort(rec.due, now)}`
+    : rec.due != null ? fmtShort(rec.due, now) : (rec.done ? '完成' : '—');
+  const cls = ['track', rec.done ? 'done' : '', editable ? 'mine' : '', rec.ownerless ? 'ownerless' : '']
+    .filter(Boolean).join(' ');
+  const attrs = editable
+    ? ` data-act="toggle" data-id="${esc(rec.id)}" title="${rec.done ? '撤销完成' : '标记我的这块完成'}" role="button" tabindex="0"`
+    : ` title="${esc(rec.roleName)}${rec.owner ? ' · ' + esc(rec.owner) : ''}"`;
+  return `<span class="${cls}"${attrs}>
+    <span class="track-role">${esc(rec.roleName)}</span>
+    ${rec.owner ? `<span class="track-owner">${esc(rec.owner)}</span>` : ''}
+    <span class="track-dates">${esc(dates)}</span>
+    ${editable ? `<span class="track-check">${icon('check')}</span>` : ''}
+  </span>`;
+}
+
+function rowCard(card, now) {
+  const rec = card.dueRec;
+  const rule = rec ? evalRules(rec, now) : null;
+  const st = rule ? resolveStyle(rule, rec, now) : null;
+  const cls = ['task', 'row-card', st ? 'has-rule' : '', card.done ? 'is-done' : ''].filter(Boolean).join(' ');
+  const rel = relTime(card.due, now);
+  const meta = [];
+
+  meta.push(`<span class="due-chip">${icon('clock')}${card.due == null ? '未设截止' : esc(fmtDue(card.due, now))}</span>`);
+  if (card.due != null && !card.done) meta.push(`<span class="rel ${rel.tone}">${esc(rel.text)}</span>`);
+  if (card.phase) meta.push(`<span class="meta-sep">·</span><span class="tag" style="--tag-color:${tagColor(card.phase)}">${esc(card.phase)}</span>`);
+  if (card.release) meta.push(`<span class="meta-sep">·</span><span class="release-chip">上线 ${esc(card.release)}</span>`);
+
+  return `
+  <article class="${cls}" data-row="${card.rowIndex}" style="${st ? styleVars(st) : ''}">
+    <div class="task-main" data-act="open-row" data-row="${card.rowIndex}">
+      <div class="task-head">
+        <h3 class="task-title" title="${esc(card.title)}">${esc(card.title)}</h3>
+        ${st && st.badge ? `<span class="badge">${esc(st.badge)}</span>` : ''}
+        ${card.doneCount ? `<span class="badge ghost">${card.doneCount}/${card.recs.length} 完成</span>` : ''}
+      </div>
+      <div class="task-meta">${meta.join('')}</div>
+      <div class="tracks">
+        ${card.recs.map((r) => trackChip(r, now)).join('')}
+        ${card.milestones.map((m) => `<span class="track milestone"><span class="track-role">${esc(m.name)}</span><span class="track-dates">${esc(m.raw)}</span></span>`).join('')}
+      </div>
+    </div>
+    <div class="task-side">
+      <button class="icon-btn" data-act="open-row" data-row="${card.rowIndex}" title="详情">${icon('chevron-right')}</button>
+    </div>
+  </article>`;
+}
+
+/** 普通任务表没有「谁负责」的限制；排期表只让本人勾自己的块 */
+function canToggle(rec) {
+  return !(state.schedule && state.schedule.enabled) || canEdit(rec);
 }
 
 function taskCard(rec, now) {
@@ -408,9 +477,9 @@ function taskCard(rec, now) {
 
   return `
   <article class="${cls}" data-id="${esc(rec.id)}" style="${st ? styleVars(st) : ''}">
-    <button class="check" data-act="toggle" data-id="${esc(rec.id)}" aria-label="${rec.done ? '标记为未完成' : '标记完成'}" title="标记完成">
+    ${canToggle(rec) ? `<button class="check" data-act="toggle" data-id="${esc(rec.id)}" aria-label="${rec.done ? '标记为未完成' : '标记完成'}" title="标记完成">
       ${icon('check')}
-    </button>
+    </button>` : ''}
     <div class="task-main" data-act="open-task" data-id="${esc(rec.id)}">
       <div class="task-head">
         <h3 class="task-title" title="${esc(rec.title)}">${esc(rec.title)}</h3>
@@ -700,6 +769,7 @@ function onViewClick(e) {
 
   switch (act) {
     case 'open-task': panels.openTask(id); break;
+    case 'open-row': panels.openRow(Number(b.dataset.row)); break;
     case 'toggle': e.stopPropagation(); toggleDone(id); render({ keepScroll: true }); break;
     case 'bell': e.stopPropagation(); panels.openTask(id, { focusReminder: true }); break;
     case 'go': setView(b.dataset.view); render(); break;

@@ -1,7 +1,7 @@
 /* 日程舱 — 抽屉 / 弹窗面板 */
 import {
   state, save, toggleDone, setOverride, setMapping, applyImport, loadDemo,
-  clearAll, exportJSON, autoMap, DEFAULT_RULES, rebuild, detectSchedule,
+  clearAll, exportJSON, autoMap, DEFAULT_RULES, rebuild, detectSchedule, canEdit,
 } from './store.js';
 import {
   evalRules, resolveStyle, styleVars, FIELDS, PALETTE, newRule, sampleRecord,
@@ -37,15 +37,17 @@ export function openTask(id, { focusReminder = false } = {}) {
   const rule = evalRules(rec, now);
   const st = rule ? resolveStyle(rule, rec, now) : null;
   const srcUrl = state.source && state.source.url;
+  // 排期表由老板和各负责人维护，这里只让本人改自己那一块
+  const editable = !(state.schedule && state.schedule.enabled) || canEdit(rec);
 
   const h = drawer({
     title: `<span style="font-size:15px">${esc(rec.title)}</span>`,
     subtitle: `${esc(rec.status || '无状态')} · ${rec.due != null ? esc(fmtDue(rec.due, now)) : '未设截止'}`,
     body: '',
     footer: `
-      <button class="btn ${rec.done ? 'ghost' : 'primary'}" data-k="toggle">
+      ${editable ? `<button class="btn ${rec.done ? 'ghost' : 'primary'}" data-k="toggle">
         ${icon('check')}${rec.done ? '标记未完成' : '标记完成'}
-      </button>
+      </button>` : '<span class="hint" style="flex:1">这块不是你负责的，只读</span>'}
       <span class="spacer"></span>
       ${srcUrl ? `<a class="btn ghost" href="${esc(srcUrl)}" target="_blank" rel="noreferrer">${icon('external')}打开飞书</a>` : ''}
       <button class="btn ghost" data-close>关闭</button>`,
@@ -142,6 +144,62 @@ export function openTask(id, { focusReminder = false } = {}) {
       return;
     }
     if (k === 'snooze-clear') { clearSnooze(id); h.setBody(body()); refresh(); }
+  });
+}
+
+/* ========================================================================== */
+/* 一行内容（一个英雄）的全部岗位                                             */
+/* ========================================================================== */
+
+export function openRow(rowIndex) {
+  const find = () => (state.rowCards || []).find((c) => c.rowIndex === rowIndex);
+  const first = find();
+  if (!first) return;
+  const now = Date.now();
+
+  const h = drawer({
+    title: `<span style="font-size:15px">${esc(first.title)}</span>`,
+    subtitle: [first.phase, first.release ? `上线 ${first.release}` : ''].filter(Boolean).join(' · ') || '全部岗位',
+    body: '',
+    footer: `<span class="hint" style="flex:1">表格由老板和各位负责人维护，这里只能勾自己负责的那块</span>
+      <button class="btn ghost" data-close>关闭</button>`,
+  });
+
+  const body = () => {
+    const c = find() || first;
+    const raw = c.recs[0] && c.recs[0].raw;
+    const roleRows = c.recs.map((r) => {
+      const editable = canEdit(r);
+      const rel = relTime(r.due, now);
+      return `<div class="kv-row">
+        <span>${esc(r.roleName)}${r.owner ? ` · ${esc(r.owner)}` : ''}</span>
+        <b style="display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+          <span>${r.done ? '<span class="tag">已完成</span>' : (r.due != null ? esc(fmtDue(r.due, now)) : '—')}</span>
+          ${!r.done && r.due != null ? `<span class="rel ${rel.tone}">${esc(rel.text)}</span>` : ''}
+          ${editable ? `<button class="btn sm ghost" data-k="toggle" data-id="${esc(r.id)}">${r.done ? '撤销完成' : '标记完成'}</button>` : ''}
+        </b>
+      </div>`;
+    }).join('');
+    const miles = c.milestones.map((m) => `<div class="kv-row"><span>${esc(m.name)}</span><b>${esc(m.raw || '—')}</b></div>`).join('');
+
+    return `
+      <div class="kv" style="margin-bottom:14px">${roleRows}${miles}</div>
+      ${state.table && raw ? `<div class="sec">
+        <div class="sec-head"><h4>原始行</h4><span class="hint">来自表格，本地只读</span></div>
+        <div class="raw-row">${state.table.headers.map((hd, i) => `<div><span>${esc(hd)}</span><b>${esc(raw[i] ?? '')}</b></div>`).join('')}</div>
+      </div>` : ''}`;
+  };
+
+  h.setBody(body());
+  h.el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-k="toggle"]');
+    if (!b) return;
+    if (!toggleDone(b.dataset.id)) {
+      toast({ type: 'warn', title: '这块不是你负责的', text: '只能勾自己名下的岗位' });
+      return;
+    }
+    h.setBody(body());
+    refresh();
   });
 }
 
