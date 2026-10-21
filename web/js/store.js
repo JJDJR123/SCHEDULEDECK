@@ -379,7 +379,7 @@ function rebuildSchedule() {
         due,
         dueRaw,
         status: done ? '完成' : '',
-        tags: [phase, role.name].filter(Boolean),
+        tags: [role.name].filter(Boolean),
         priority: '',
         owner: owners[0] || ownerRaw,
         owners,
