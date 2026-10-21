@@ -84,6 +84,7 @@ git add -A; git commit -m "..."; git push
 - 新旧判断用 `version.json`（`build.ps1` 生成、打进 payload、`/api/update/check` 读）和 exe 内嵌的 `Stamp.txt`（启动器那条通道用）
 - 托盘右键「检查更新…」是启动器自己走的老通道，保留着；`--auto-update` 可跳过确认直接装
 - 相关接口：`/api/update/check`、`/api/update/download`、`/api/update/progress`、`/api/update/apply`、`/api/update-config`
+- **私有源**：`data/update.json` 支持 `token`（只读）。检查清单和下载 exe 都带 `Authorization: Bearer`；下载额外带 `Accept: application/octet-stream`，所以 GitHub 私有 release 的 `https://api.github.com/repos/<o>/<r>/releases/assets/<id>` 也能直下
 - 更新日志在 `data/update.log`
 
 ## 7. 数据与凭证
