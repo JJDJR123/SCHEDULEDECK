@@ -21,11 +21,19 @@ import {
 let refresh = () => {};
 export function setRefresh(fn) { refresh = fn; }
 
-const REMINDER_PRESETS = [
-  { v: 0, label: '准时' }, { v: 10, label: '10 分钟' }, { v: 15, label: '15 分钟' }, { v: 30, label: '30 分钟' },
+const REMINDER_PRESETS = [  { v: 0, label: '准时' }, { v: 10, label: '10 分钟' }, { v: 15, label: '15 分钟' }, { v: 30, label: '30 分钟' },
   { v: 60, label: '1 小时' }, { v: 120, label: '2 小时' }, { v: 1440, label: '1 天' },
   { v: 2880, label: '2 天' }, { v: 10080, label: '7 天' },
 ];
+
+/** 「我的」颜色候选 */
+const MY_COLORS = ['#5B5BF0', '#0EA5E9', '#12B76A', '#F79009', '#F04438', '#8B5CF6', '#E11D74', '#0F766E'];
+
+export function applyMyColor() {
+  const c = String(state.settings.myColor || '');
+  const ok = /^#[0-9a-f]{6}$/i.test(c) ? c : '#5B5BF0';
+  document.documentElement.style.setProperty('--my-color', ok);
+}
 
 /* ========================================================================== */
 /* 任务详情                                                                   */
@@ -647,6 +655,14 @@ export function openSettings(tab = 'source') {
         <label>紧凑模式 <span class="opt">一屏显示更多任务</span></label>
         ${switchHtml(state.settings.density === 'compact', 'data-k="density"')}
       </div>
+      <div class="field">
+        <label>我的颜色 <span class="opt">自己负责的那块卡片用这个色</span></label>
+        <div class="row" style="align-items:center;gap:7px;flex-wrap:wrap">
+          ${MY_COLORS.map((c) => `<button class="swatch ${String(state.settings.myColor).toLowerCase() === c.toLowerCase() ? 'active' : ''}" data-k="my-color" data-v="${c}" style="background:${c}" title="${c}"></button>`).join('')}
+          <label class="swatch custom" title="自定义颜色"><input type="color" data-k="my-color-input" value="${esc(state.settings.myColor || '#5B5BF0')}" /></label>
+          <span class="hint" style="margin:0 0 0 4px">${esc(state.settings.myColor || '#5B5BF0')}</span>
+        </div>
+      </div>
       <div class="field" style="margin-top:20px">
         <label>数据</label>
         <div class="row">
@@ -742,6 +758,11 @@ export function openSettings(tab = 'source') {
       return;
     }
     if (k === 'theme') { state.settings.theme = b.dataset.v; applyTheme(); save(); h.setBody(body()); refresh(); return; }
+    if (k === 'my-color') {
+      state.settings.myColor = b.dataset.v;
+      applyMyColor(); save(); h.setBody(body()); refresh();
+      return;
+    }
     if (k === 'density') {
       state.settings.density = state.settings.density === 'compact' ? 'cozy' : 'compact';
       applyDensity(); save(); h.setBody(body()); return;
@@ -756,6 +777,11 @@ export function openSettings(tab = 'source') {
   h.el.addEventListener('change', (e) => {
     const t = e.target;
     const k = t.dataset.k;
+    if (k === 'my-color-input') {
+      state.settings.myColor = t.value;
+      applyMyColor(); save(); h.setBody(body()); refresh();
+      return;
+    }
     if (k === 'map') {
       setMapping({ [t.dataset.role]: Number(t.value) });
       refresh();
@@ -771,8 +797,7 @@ export function openSettings(tab = 'source') {
       state.settings.myName = t.value.trim();
       save(); refresh(); h.setBody(body());
     }
-    if (k === 'sched-col') {
-      setScheduleCol(t.dataset.key, Number(t.value));
+    if (k === 'sched-col') {      setScheduleCol(t.dataset.key, Number(t.value));
       refresh(); h.setBody(body());
       toast({ type: 'ok', title: '列已更新', text: `当前共 ${state.records.length} 条角色任务` });
     }

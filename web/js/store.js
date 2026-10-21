@@ -39,6 +39,7 @@ export const DEFAULT_SETTINGS = {
   myName: '',
   fillDown: true,
   syncOnSwitch: false,
+  myColor: '#5B5BF0',
 };
 
 export const DEFAULT_SCHEDULE = {

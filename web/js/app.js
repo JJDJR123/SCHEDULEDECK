@@ -15,6 +15,7 @@ async function boot() {
 
   panels.applyTheme();
   panels.applyDensity();
+  panels.applyMyColor();
   panels.setRefresh(() => render());
   initUI();
 
