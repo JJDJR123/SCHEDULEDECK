@@ -552,6 +552,10 @@ export function openSettings(tab = 'source') {
         <div class="field"><label>档期基准日</label><input class="input" type="date" data-k="base-date" value="${esc(S.baseDate || '')}" /></div>
       </div>
       <p class="hint" style="margin-top:-6px">表里只有「10月24日」这种写法，用基准日补年份：基准日前 30 天内的算今年，跨年的自动算下一年，不会改表格。</p>
+      <div class="switch-row">
+        <div class="txt"><b>负责人向下填充</b><span>合并单元格只有左上角那格有值，打开后按上一行补全（不改表格）</span></div>
+        ${switchHtml(state.settings.fillDown, 'data-k="fill-down"')}
+      </div>
       <div class="field">
         <label>角色分组 <span class="opt">自动识别，可改名</span></label>
         <div class="kv">
@@ -687,6 +691,7 @@ export function openSettings(tab = 'source') {
     }
     if (k === 'sound') { state.settings.sound = !state.settings.sound; save(); h.setBody(body()); return; }
     if (k === 'show-done') { state.settings.showDone = !state.settings.showDone; save(); refresh(); h.setBody(body()); return; }
+    if (k === 'fill-down') { state.settings.fillDown = !state.settings.fillDown; rebuild(); save(); refresh(); h.setBody(body()); return; }
     if (k === 'theme') { state.settings.theme = b.dataset.v; applyTheme(); save(); h.setBody(body()); refresh(); return; }
     if (k === 'density') {
       state.settings.density = state.settings.density === 'compact' ? 'cozy' : 'compact';

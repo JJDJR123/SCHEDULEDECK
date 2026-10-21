@@ -1,7 +1,7 @@
 /* 日程舱 — 主界面渲染 */
 import {
   state, setView, setFilter, resetFilters, toggleDone, filteredRecords, rowCardList,
-  tagCounts, computeStats, save, DEFAULT_RULES, phaseList, canEdit,
+  tagCounts, computeStats, save, DEFAULT_RULES, phaseList, canEdit, TAG_MULTI_SELECT,
 } from './store.js';
 import { evalRules, resolveStyle, styleVars, describeRule, sampleRecord } from './rules.js';
 import { icon, toast } from './kit.js';
@@ -432,12 +432,15 @@ function rowCard(card, now) {
     <div class="task-main" data-act="open-row" data-row="${card.rowIndex}">
       <div class="task-head">
         <h3 class="task-title" title="${esc(card.title)}">${esc(card.title)}</h3>
+        ${card.unplanned ? '<span class="badge ghost">未排期</span>' : ''}
         ${st && st.badge ? `<span class="badge">${esc(st.badge)}</span>` : ''}
         ${card.doneCount ? `<span class="badge ghost">${card.doneCount}/${card.recs.length} 完成</span>` : ''}
       </div>
       <div class="task-meta">${meta.join('')}</div>
       <div class="tracks">
-        ${card.recs.map((r) => trackChip(r, now)).join('')}
+        ${card.recs.length
+          ? card.recs.map((r) => trackChip(r, now)).join('')
+          : '<span class="track milestone"><span class="track-role">未排期</span><span class="track-dates">还没有人认领</span></span>'}
         ${card.milestones.map((m) => `<span class="track milestone"><span class="track-role">${esc(m.name)}</span><span class="track-dates">${esc(m.raw)}</span></span>`).join('')}
       </div>
     </div>
@@ -754,11 +757,13 @@ export function initUI() {
 }
 
 function toggleTag(tag) {
-  const tags = state.filters.tags.includes(tag)
-    ? state.filters.tags.filter((t) => t !== tag)
-    : [...state.filters.tags, tag];
+  const cur = state.filters.tags;
+  // TAG_MULTI_SELECT=false：选哪个看哪个，再点一次取消；=true 恢复多选叠加
+  const tags = TAG_MULTI_SELECT
+    ? (cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag])
+    : (cur.length === 1 && cur[0] === tag ? [] : [tag]);
   setFilter({ tags });
-  render();
+  render({ keepScroll: true });
 }
 
 function onViewClick(e) {

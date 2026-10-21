@@ -4,6 +4,14 @@ import {
 } from './util.js';
 
 const LS_KEY = 'scheduledeck.v1';
+
+/**
+ * 侧栏「档期 / 角色」标签的交互方式。
+ * false = 选哪个看哪个（单选，再点一次取消）；true = 多选叠加。
+ * 多选代码一直保留着，想调回去把这里改成 true 就行。
+ */
+export const TAG_MULTI_SELECT = false;
+
 const ROLES = ['title', 'due', 'status', 'tags', 'priority', 'owner', 'note', 'id'];
 const ROLE_KEYWORDS = {
   title: ['任务', '事项', '内容', '名称', '标题', '待办', '工作', 'task', 'title', 'item', 'todo', 'name'],
@@ -29,6 +37,7 @@ export const DEFAULT_SETTINGS = {
   sortBy: 'due',
   showDone: true,
   myName: '',
+  fillDown: true,
 };
 
 export const DEFAULT_SCHEDULE = {
@@ -443,15 +452,35 @@ function rebuildSchedule() {
   const roles = (S.roles || []).filter((r) => r.dateCols && r.dateCols.length);
   const milestones = S.milestones || [];
 
+  // 合并单元格：飞书只返回左上角那一格，其余行是空串。
+  // fillDown 打开时把上一行的负责人顺延下来，关掉就保持原样（设置 → 排期设置里可切）。
+  // 整行一个人都没排（黄忠、魏延这种）不填，免得凭空长出负责人。
+  const rowHasRoleData = rows.map((row) => roles.some((role) => {
+    if (role.ownerCol >= 0 && String(row[role.ownerCol] ?? '').trim()) return true;
+    return role.dateCols.some((ci) => String(row[ci] ?? '').trim());
+  }));
+  const filledOwners = roles.map((role) => {
+    if (role.ownerCol < 0 || !state.settings.fillDown) return null;
+    const out = new Array(rows.length).fill('');
+    let last = '';
+    for (let i = 0; i < rows.length; i++) {
+      const v = String(rows[i][role.ownerCol] ?? '').trim();
+      if (v) last = v;
+      out[i] = rowHasRoleData[i] ? (v || last) : '';
+    }
+    return out;
+  });
+
   rows.forEach((row, idx) => {
     const content = S.titleCol >= 0 ? String(row[S.titleCol] ?? '').trim() : '';
     const phase = S.phaseCol >= 0 ? String(row[S.phaseCol] ?? '').trim() : '';
     const release = S.releaseCol >= 0 ? String(row[S.releaseCol] ?? '').trim() : '';
     const recs = [];
 
-    roles.forEach((role) => {
+    roles.forEach((role, ri) => {
       const hasOwnerCol = role.ownerCol >= 0;
-      const ownerRaw = hasOwnerCol ? String(row[role.ownerCol] ?? '').trim() : '';
+      const ownCell = hasOwnerCol ? String(row[role.ownerCol] ?? '').trim() : '';
+      const ownerRaw = ownCell || (filledOwners[ri] ? filledOwners[ri][idx] : '');
       if (hasOwnerCol && !ownerRaw) return;
 
       // 该岗位的开始 / 截止：取这一组日期列里最早与最晚的可解析日期
@@ -504,7 +533,27 @@ function rebuildSchedule() {
       });
     });
 
-    if (!recs.length) return;
+    if (!recs.length) {
+      // 一行什么都没有：也给一张「未排期」卡，看得见才知道该排谁
+      if (content) {
+        state.rowCards.push({
+          rowIndex: idx,
+          title: content,
+          phase,
+          release,
+          releaseTs: release ? parseMonthDay(release, baseTs) : null,
+          recs: [],
+          milestones: milestones
+            .map((m) => {
+              const raw = String(row[m.dateCols[0]] ?? '').trim();
+              return { name: m.name, raw, due: isMonthDay(raw) ? parseMonthDay(raw, baseTs) : null };
+            })
+            .filter((m) => m.raw),
+          unplanned: true,
+        });
+      }
+      return;
+    }
     state.records.push(...recs);
     state.rowCards.push({
       rowIndex: idx,
@@ -684,7 +733,7 @@ export function rowCardList({ ignoreBucket = false } = {}) {
   let cards = (state.rowCards || []).map((card) => ({
     ...card,
     recs: onlyRole ? card.recs.filter((r) => r.roleKey === onlyRole) : card.recs,
-  })).filter((c) => c.recs.length);
+  })).filter((c) => c.recs.length || (!onlyRole && c.unplanned));
 
   cards.forEach((c) => {
     const open = c.recs.filter((r) => !r.done);
@@ -693,7 +742,7 @@ export function rowCardList({ ignoreBucket = false } = {}) {
     const pick = withDue.slice().sort((a, b) => a.due - b.due)[0] || pool[0] || null;
     c.due = pick && pick.due != null ? pick.due : null;
     c.dueRec = pick;
-    c.done = c.recs.every((r) => r.done);
+    c.done = c.recs.length > 0 && c.recs.every((r) => r.done);
     c.doneCount = c.recs.filter((r) => r.done).length;
     c.mine = !!me && c.recs.some((r) => canEdit(r));
   });
