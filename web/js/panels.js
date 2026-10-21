@@ -478,6 +478,9 @@ export function openSettings(tab = 'source') {
     ['look', '外观与数据', 'palette'],
   ];
 
+  // 「我的颜色」先在草稿里试，点「应用」才真的生效
+  let myDraft = null;
+
   function body() {
     return `
       <div class="tabs" style="margin:-4px 0 16px">
@@ -643,6 +646,7 @@ export function openSettings(tab = 'source') {
   }
 
   function lookTab() {
+    const myColor = myDraft || state.settings.myColor || '#5B5BF0';
     return `
       <div class="field">
         <label>主题</label>
@@ -656,12 +660,23 @@ export function openSettings(tab = 'source') {
         ${switchHtml(state.settings.density === 'compact', 'data-k="density"')}
       </div>
       <div class="field">
-        <label>我的颜色 <span class="opt">自己负责的那块卡片用这个色</span></label>
-        <div class="row" style="align-items:center;gap:7px;flex-wrap:wrap">
-          ${MY_COLORS.map((c) => `<button class="swatch ${String(state.settings.myColor).toLowerCase() === c.toLowerCase() ? 'active' : ''}" data-k="my-color" data-v="${c}" style="background:${c}" title="${c}"></button>`).join('')}
-          <label class="swatch custom" title="自定义颜色"><input type="color" data-k="my-color-input" value="${esc(state.settings.myColor || '#5B5BF0')}" /></label>
-          <span class="hint" style="margin:0 0 0 4px">${esc(state.settings.myColor || '#5B5BF0')}</span>
+        <label>我的颜色 <span class="opt">自己负责的那块卡片用这个色，选好先预览再应用</span></label>
+        <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">
+          <span class="track mine" style="--my-color:${esc(myColor)};cursor:default;flex:none" title="预览：列表里就是长这样">
+            <span class="track-role">策划</span><span class="track-owner">杨浩源</span><span class="track-dates">11/21</span><span class="track-check">${icon('check')}</span>
+          </span>
+          <label class="swatch custom" title="打开调色盘" style="width:26px;height:26px;flex:none"><input type="color" data-k="my-color-input" value="${esc(myColor)}" /></label>
+          <code class="hint" style="margin:0">${esc(myColor)}</code>
+          <span class="spacer"></span>
+          ${myDraft && myDraft !== state.settings.myColor
+            ? `<button class="btn sm ghost" data-k="my-color-reset">还原</button>
+               <button class="btn sm primary" data-k="my-color-apply">${icon('check')}应用这个颜色</button>`
+            : `<span class="hint" style="margin:0">当前生效中</span>`}
         </div>
+        <div class="chips" style="margin-top:9px">
+          ${MY_COLORS.map((c) => `<button class="chip ${myColor.toLowerCase() === c.toLowerCase() ? 'active' : ''}" data-k="my-color" data-v="${c}" title="${c}"><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${c};margin-right:5px"></span>${c}</button>`).join('')}
+        </div>
+        <p class="hint">点色块或者调色盘只是「试色」，上面的小胶囊就是列表里的真实样子；满意了再点「应用这个颜色」。</p>
       </div>
       <div class="field" style="margin-top:20px">
         <label>自动更新 <span class="opt">latest.json 的网址</span></label>
@@ -764,8 +779,21 @@ export function openSettings(tab = 'source') {
     }
     if (k === 'theme') { state.settings.theme = b.dataset.v; applyTheme(); save(); h.setBody(body()); refresh(); return; }
     if (k === 'my-color') {
-      state.settings.myColor = b.dataset.v;
+      // 只是试色：换草稿 + 刷新预览，不落盘
+      myDraft = b.dataset.v;
+      h.setBody(body());
+      return;
+    }
+    if (k === 'my-color-apply') {
+      state.settings.myColor = myDraft || state.settings.myColor;
+      myDraft = null;
       applyMyColor(); save(); h.setBody(body()); refresh();
+      toast({ type: 'ok', title: '颜色已应用', text: state.settings.myColor });
+      return;
+    }
+    if (k === 'my-color-reset') {
+      myDraft = null;
+      h.setBody(body());
       return;
     }
     if (k === 'density') {
@@ -783,8 +811,9 @@ export function openSettings(tab = 'source') {
     const t = e.target;
     const k = t.dataset.k;
     if (k === 'my-color-input') {
-      state.settings.myColor = t.value;
-      applyMyColor(); save(); h.setBody(body()); refresh();
+      // 调色盘只是试色，点「应用这个颜色」才生效
+      myDraft = t.value;
+      h.setBody(body());
       return;
     }
     if (k === 'map') {
