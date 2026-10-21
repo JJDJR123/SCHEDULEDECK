@@ -500,6 +500,13 @@ export function openSettings(tab = 'source') {
       </div>
       ${src && src.kind === 'feishu' ? `<div class="callout ok">${icon('check-circle')}<div>已保存应用凭证，刷新时会用同一份凭证重新读取；App Secret 只存在本机。</div></div>` : ''}
       ${src && src.kind === 'demo' ? `<div class="callout warn">${icon('info')}<div>当前是示例数据，不能同步。导入飞书表格后即可实时刷新。</div></div>` : ''}
+      <div class="switch-row">
+        <div class="txt"><b>切换数据源时自动同步</b><span>默认关闭：切换只用本地缓存，想看最新就点「立即同步」</span></div>
+        ${switchHtml(state.settings.syncOnSwitch, 'data-k="sync-on-switch"')}
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn ghost" data-k="open-browser" style="flex:none">${icon('external')}在浏览器中打开</button>
+      </div>
       <div class="field" style="margin-top:18px">
         <label>其他操作</label>
         <div class="row">
@@ -714,6 +721,17 @@ export function openSettings(tab = 'source') {
     if (k === 'sound') { state.settings.sound = !state.settings.sound; save(); h.setBody(body()); return; }
     if (k === 'show-done') { state.settings.showDone = !state.settings.showDone; save(); refresh(); h.setBody(body()); return; }
     if (k === 'fill-down') { state.settings.fillDown = !state.settings.fillDown; rebuild(); save(); refresh(); h.setBody(body()); return; }
+    if (k === 'sync-on-switch') { state.settings.syncOnSwitch = !state.settings.syncOnSwitch; save(); h.setBody(body()); return; }
+    if (k === 'open-browser') {
+      fetch('/api/open-browser', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: location.href }),
+      }).then((r) => r.json()).then((j) => {
+        if (!j.ok) toast({ type: 'warn', title: '没打开浏览器', text: j.error || '' });
+      }).catch(() => {});
+      return;
+    }
     if (k === 'role-date') {
       if (!toggleRoleDateCol(b.dataset.key, Number(b.dataset.col))) {
         toast({ type: 'warn', title: '至少留一个日期列', text: '这个岗位至少要有一列日期，否则没有截止时间' });
@@ -849,7 +867,10 @@ const FEISHU_STEPS = `
     <div class="step"><span>把表格链接、App ID、App Secret 填到下面，点「连接并导入」。</span></div>
   </div>`;
 
-export function openImport(tab = 'oauth', { asNew = false } = {}) {
+export function openImport(tab = 'oauth', opts = {}) {
+  // 允许 openImport({ asNew: true }) 这种写法
+  if (tab && typeof tab === 'object') { opts = tab; tab = opts.tab || 'oauth'; }
+  const asNew = !!opts.asNew;
   let pollTimer = 0;
   // 新开一条数据源还是替换当前这条
   const push = (data) => applyImport(data, { asNew });

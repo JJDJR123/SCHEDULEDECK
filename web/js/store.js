@@ -38,6 +38,7 @@ export const DEFAULT_SETTINGS = {
   showDone: true,
   myName: '',
   fillDown: true,
+  syncOnSwitch: false,
 };
 
 export const DEFAULT_SCHEDULE = {

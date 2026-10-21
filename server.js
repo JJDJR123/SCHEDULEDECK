@@ -383,6 +383,21 @@ async function handler(req, res) {
       }
     }
 
+    if (p === '/api/open-browser' && req.method === 'POST') {
+      // 用系统默认浏览器打开当前页面（--app 窗口里点这个才有意义）
+      let body = {};
+      try { body = await readBody(req); } catch { body = {}; }
+      const target = String((body && body.url) || '').trim();
+      const url = /^https?:\/\/127\.0\.0\.1[:/]/.test(target) ? target : `http://127.0.0.1:${server.address().port}/`;
+      try {
+        const { execFile } = require('child_process');
+        execFile('cmd', ['/c', 'start', '', url], { windowsHide: true }, () => {});
+        return send(res, 200, { ok: true, url });
+      } catch (e) {
+        return send(res, 200, { ok: false, error: e.message || String(e) });
+      }
+    }
+
     if (p === '/api/shutdown' && req.method === 'POST') {
       send(res, 200, { ok: true });
       setTimeout(() => process.exit(0), 120);

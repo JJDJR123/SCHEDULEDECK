@@ -727,8 +727,28 @@ export function initUI() {
   document.getElementById('sideSource').addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]');
     if (!b) return;
-    if (b.dataset.act === 'import') panels.openImport();
-    if (b.dataset.act === 'sync') window.__syncNow && window.__syncNow();
+    const act = b.dataset.act;
+    if (act === 'import') { panels.openImport(); return; }
+    if (act === 'import-new') { panels.openImport({ asNew: true }); return; }
+    if (act === 'sync') { window.__syncNow && window.__syncNow(); return; }
+    if (act === 'source-switch') {
+      if (switchSource(b.dataset.id)) {
+        render();
+        // 默认只用本地缓存；开了「切换时自动同步」才去读表
+        const src = state.source;
+        if (state.settings.syncOnSwitch && src && src.kind === 'feishu' && src.url) {
+          window.__syncNow && window.__syncNow();
+        }
+      }
+      return;
+    }
+    if (act === 'source-remove') {
+      e.stopPropagation();
+      if (removeSource(b.dataset.id)) {
+        toast({ type: 'ok', title: '已移除这个数据源' });
+        render();
+      }
+    }
   });
 
   document.getElementById('sideTags').addEventListener('click', (e) => {

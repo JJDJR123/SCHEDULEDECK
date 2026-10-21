@@ -314,17 +314,31 @@ namespace ScheduleDeck
 
         private static void OpenWindow()
         {
+            // 已经有窗口就把它叫到前面，别又开一个
+            if (FocusExistingWindow()) return;
+            OpenAppWindow(_baseUrl);
+        }
+
+        private static void OpenAppWindow(string url)
+        {
             try
             {
+                if (_profileDir == null)
+                {
+                    _profileDir = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "ScheduleDeck", "browser");
+                    try { Directory.CreateDirectory(_profileDir); } catch { }
+                }
                 string browser = FindBrowser();
                 if (browser == null)
                 {
-                    Process.Start(_baseUrl);
+                    Process.Start(url);
                     return;
                 }
                 var psi = new ProcessStartInfo();
                 psi.FileName = browser;
-                psi.Arguments = "--app=" + _baseUrl
+                psi.Arguments = "--app=" + url
                     + " --user-data-dir=" + Quote(_profileDir)
                     + " --no-first-run --no-default-browser-check --window-size=1440,940"
                     + " --disable-features=Translate,MediaRouter";
@@ -335,6 +349,58 @@ namespace ScheduleDeck
             {
                 MessageBox.Show("无法打开界面：" + ex.Message, "日程舱",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        /* ---------------------------------------------------------------- 窗口 */
+
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        /// <summary>找已经打开的「日程舱」应用窗口（Chromium --app），有就还原并置前</summary>
+        private static bool FocusExistingWindow()
+        {
+            IntPtr found = IntPtr.Zero;
+            try
+            {
+                EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
+                {
+                    if (!IsWindowVisible(hWnd)) return true;
+                    var sb = new StringBuilder(512);
+                    GetWindowText(hWnd, sb, sb.Capacity);
+                    string title = sb.ToString();
+                    if (title.IndexOf("日程舱", StringComparison.Ordinal) < 0) return true;
+                    bool looksLikeApp = title.IndexOf("ScheduleDeck", StringComparison.OrdinalIgnoreCase) >= 0
+                        || title.IndexOf("飞书", StringComparison.Ordinal) >= 0
+                        || title.Trim() == "日程舱";
+                    if (!looksLikeApp) return true;
+                    found = hWnd;
+                    return false;
+                }, IntPtr.Zero);
+            }
+            catch
+            {
+            }
+            if (found == IntPtr.Zero) return false;
+            try
+            {
+                ShowWindow(found, 9); // SW_RESTORE
+                SetForegroundWindow(found);
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -411,6 +477,7 @@ namespace ScheduleDeck
 
         private static void OpenExisting()
         {
+            // 二次启动：优先把已经在跑的应用窗口叫到前面；窗口关了就再开一个（不丢到默认浏览器）
             try
             {
                 string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
@@ -420,7 +487,8 @@ namespace ScheduleDeck
                     string port = File.ReadAllText(portFile).Trim();
                     if (port.Length > 0)
                     {
-                        Process.Start("http://127.0.0.1:" + port + "/");
+                        if (FocusExistingWindow()) return;
+                        OpenAppWindow("http://127.0.0.1:" + port + "/");
                         return;
                     }
                 }
