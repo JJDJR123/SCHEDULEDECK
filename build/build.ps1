@@ -1,7 +1,11 @@
 ﻿# 打包日程舱：生成图标 -> 编译启动器 -> 组装 dist\日程舱
+param(
+  [string]$Stamp = ''
+)
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
+if (-not $Stamp) { $Stamp = Get-Date -Format 'yyyyMMddHHmmss' }
 $launcherDir = Join-Path $root 'launcher'
 $distRoot = Join-Path $root 'dist'   # 放在仓库内（已在 .gitignore），不再写到上一级
 $dist = Join-Path $distRoot '日程舱'
@@ -28,6 +32,9 @@ Copy-Item (Join-Path $root 'web\*') (Join-Path $dist 'web') -Recurse -Force
 Copy-Item $exe $dist
 Copy-Item (Join-Path $launcherDir 'app.ico') $dist
 Copy-Item (Join-Path $root 'build\README-dist.txt') $dist
+# 版本信息：服务端读它判断「当前版本」，更新流程用
+$versionJson = @{ version = ('1.0.' + $Stamp); stamp = $Stamp; builtAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } | ConvertTo-Json
+[System.IO.File]::WriteAllText((Join-Path $dist 'version.json'), $versionJson, (New-Object System.Text.UTF8Encoding($false)))
 
 $node = (Get-Command node -ErrorAction SilentlyContinue)
 if (-not $node) { throw '找不到 node.exe，无法打包运行时' }

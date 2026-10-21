@@ -566,6 +566,10 @@ a:hover { text-decoration: underline; }
 .track.milestone .track-role { font-weight: 500; color: var(--text-3); }
 .release-chip { color: var(--text-3); }
 
+/* 检查更新：下载进度条 */
+.upbar { height: 8px; border-radius: 99px; background: var(--panel-3); overflow: hidden; }
+.upbar > span { display: block; height: 100%; border-radius: 99px; background: var(--accent); transition: width .2s ease; }
+
 [data-theme="dark"] .track { background: var(--panel-3); }
 [data-theme="dark"] .track.mine {
   background: color-mix(in srgb, var(--my-color, var(--accent)) 26%, var(--panel-3));

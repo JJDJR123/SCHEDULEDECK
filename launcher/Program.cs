@@ -22,6 +22,7 @@ namespace ScheduleDeck
     {
         private static NotifyIcon _tray;
         private static System.Windows.Forms.Timer _updateTimer;
+        private static System.Windows.Forms.Timer _applyTimer;
         private static Process _node;
         private static string _baseUrl;
         private static string _appDir;
@@ -294,7 +295,41 @@ namespace ScheduleDeck
             _tray.ContextMenuStrip = menu;
             _tray.DoubleClick += delegate { OpenWindow(); };
             StartUpdateTimer();
+            if (_packaged) StartApplyWatcher();
             if (_autoInstall) CheckForUpdate(false);
+        }
+
+        /* ---------------------------------------------------------------- 页面发起的更新 */
+
+        /// <summary>页面下载并校验好之后会写 data\update\apply.json，这里负责退出、替换、重启</summary>
+        private static void StartApplyWatcher()
+        {
+            var t = new System.Windows.Forms.Timer();
+            t.Interval = 2000;
+            t.Tick += delegate
+            {
+                try
+                {
+                    string request = Path.Combine(_dataDir, "update", "apply.json");
+                    if (!File.Exists(request)) return;
+                    string text = File.ReadAllText(request, Encoding.UTF8);
+                    try { File.Delete(request); } catch { }
+                    string file = MatchValue(text, "path");
+                    string sha = MatchValue(text, "sha256");
+                    if (file.Length == 0 || !File.Exists(file)) return;
+                    if (sha.Length > 0)
+                    {
+                        string got = Sha256File(file);
+                        if (!string.Equals(got, sha, StringComparison.OrdinalIgnoreCase)) return;
+                    }
+                    ApplyUpdate(file);
+                }
+                catch
+                {
+                }
+            };
+            t.Start();
+            _applyTimer = t;
         }
 
         /* ---------------------------------------------------------------- 自动更新 */

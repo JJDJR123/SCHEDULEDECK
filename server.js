@@ -30,6 +30,52 @@ let pendingState = '';
 
 fs.mkdirSync(DATA, { recursive: true });
 
+/* ------------------------------------------------------------------ 自动更新 */
+
+let updateState = { phase: 'idle', received: 0, total: 0, error: '', file: '' };
+
+function appVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
+  } catch {
+    return { version: 'dev', stamp: '0' };
+  }
+}
+
+function sha256File(file) {
+  const h = crypto.createHash('sha256');
+  h.update(fs.readFileSync(file));
+  return h.digest('hex');
+}
+
+async function downloadUpdate(url) {
+  updateState = { phase: 'downloading', received: 0, total: 0, error: '', file: '' };
+  const dir = path.join(DATA, 'update');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'new.exe');
+  try { fs.unlinkSync(file); } catch { /* 没有就算了 */ }
+
+  const res = await fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
+  if (!res.ok) throw new Error('下载失败：HTTP ' + res.status);
+  updateState.total = Number(res.headers.get('content-length') || 0);
+
+  const out = fs.createWriteStream(file);
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();   // eslint-disable-line no-await-in-loop
+    if (done) break;
+    updateState.received += value.length;
+    if (!out.write(Buffer.from(value))) {
+      await new Promise((r) => out.once('drain', r));   // eslint-disable-line no-await-in-loop
+    }
+  }
+  await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+  updateState.phase = 'ready';
+  updateState.file = file;
+  return file;
+}
+
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -383,6 +429,71 @@ async function handler(req, res) {
         console.log(`[sync] 失败 code=${code} url=${url} :: ${e.message || e}`);
         return send(res, 200, { ok: false, error: e.message || String(e), code });
       }
+    }
+
+    if (p === '/api/update/check') {
+      const cfg = readJson(path.join(DATA, 'update.json'), {});
+      const manifestUrl = String(cfg.manifestUrl || '').trim();
+      const cur = appVersion();
+      if (!manifestUrl) {
+        return send(res, 200, { ok: false, error: '还没有配置更新地址', current: cur });
+      }
+      try {
+        const r = await fetch(manifestUrl, { headers: { 'Cache-Control': 'no-cache' } });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const latest = await r.json();
+        if (!latest || !latest.stamp || !latest.url) throw new Error('latest.json 缺字段');
+        return send(res, 200, {
+          ok: true,
+          current: cur,
+          latest,
+          hasUpdate: String(latest.stamp) > String(cur.stamp || '0'),
+        });
+      } catch (e) {
+        return send(res, 200, { ok: false, error: '检查更新失败：' + (e.message || e), current: cur });
+      }
+    }
+
+    if (p === '/api/update/download' && req.method === 'POST') {
+      let body = {};
+      try { body = await readBody(req); } catch { body = {}; }
+      const url = String((body && body.url) || '').trim();
+      if (!/^https?:\/\//i.test(url)) return send(res, 200, { ok: false, error: '更新地址不合法' });
+      downloadUpdate(url).then(
+        () => send(res, 200, { ok: true, progress: updateState }),
+        (e) => { updateState.phase = 'error'; updateState.error = e.message || String(e); send(res, 200, { ok: false, error: updateState.error }); },
+      );
+      return undefined;
+    }
+
+    if (p === '/api/update/progress') {
+      return send(res, 200, { ok: true, progress: updateState });
+    }
+
+    if (p === '/api/update/apply' && req.method === 'POST') {
+      let body = {};
+      try { body = await readBody(req); } catch { body = {}; }
+      const file = updateState.file;
+      if (updateState.phase !== 'ready' || !file || !fs.existsSync(file)) {
+        return send(res, 200, { ok: false, error: '还没有下载好更新包' });
+      }
+      const got = sha256File(file);
+      const want = String((body && body.sha256) || '').toLowerCase();
+      if (want && got !== want) {
+        updateState.phase = 'error';
+        updateState.error = 'sha256 不匹配';
+        return send(res, 200, { ok: false, error: '下载的文件校验不通过（sha256 不匹配）' });
+      }
+      // 通知启动器：它负责退出、替换、重启
+      const dir = path.join(DATA, 'update');
+      fs.mkdirSync(dir, { recursive: true });
+      writeJson(path.join(dir, 'apply.json'), {
+        path: file,
+        sha256: got,
+        stamp: String((body && body.stamp) || ''),
+        at: Date.now(),
+      });
+      return send(res, 200, { ok: true, sha256: got });
     }
 
     if (p === '/api/update-config') {

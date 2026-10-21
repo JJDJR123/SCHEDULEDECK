@@ -213,6 +213,138 @@ export function openRow(rowIndex) {
 }
 
 /* ========================================================================== */
+/* 检查更新                                                                   */
+/* ========================================================================== */
+
+const fmtMB = (n) => (n ? (n / 1024 / 1024).toFixed(1) + ' MB' : '—');
+
+export function openUpdate() {
+  let phase = 'checking';
+  let info = null;
+  let errMsg = '';
+  let got = 0;
+  let total = 0;
+  let poll = 0;
+
+  const m = modal({ title: '检查更新', subtitle: '从设置的更新地址读取 latest.json', body: '', footer: '' });
+
+  const bar = () => {
+    const pct = total ? Math.min(100, Math.round((got / total) * 100)) : 0;
+    return `
+      <div class="upbar"><span style="width:${pct}%"></span></div>
+      <p class="hint" style="margin:6px 0 0">${total ? `${fmtMB(got)} / ${fmtMB(total)} · ${pct}%` : fmtMB(got)}</p>`;
+  };
+
+  const body = () => {
+    if (phase === 'checking') return `<p class="hint" style="margin:0">正在检查…</p>`;
+    if (phase === 'error') {
+      return `<div class="callout warn">${icon('alert')}<div>${esc(errMsg)}</div></div>
+        <p class="hint">更新地址在 设置 → 外观与数据 → 自动更新 里填，形如 <code>https://…/latest.json</code>。</p>`;
+    }
+    if (phase === 'none') {
+      return `<div class="callout ok">${icon('check-circle')}<div>已经是最新版本（${esc(info.current.version || info.current.stamp || '')}）。</div></div>`;
+    }
+    if (phase === 'ready') {
+      const l = info.latest;
+      return `
+        <div class="kv" style="margin-bottom:12px">
+          <div class="kv-row"><span>当前版本</span><b>${esc(info.current.version || info.current.stamp)}</b></div>
+          <div class="kv-row"><span>最新版本</span><b>${esc(l.version || l.stamp)}</b></div>
+          <div class="kv-row"><span>安装包</span><b>${fmtMB(Number(l.size) || 0)}</b></div>
+          ${l.notes ? `<div class="kv-row"><span>更新说明</span><b style="font-weight:450;color:var(--text-2)">${esc(l.notes)}</b></div>` : ''}
+        </div>
+        <p class="hint" style="margin:0">更新会下载到本机、校验 sha256，然后自动退出替换并重启。</p>`;
+    }
+    if (phase === 'downloading') return `<p class="hint" style="margin:0 0 6px">正在下载更新包…</p>${bar()}`;
+    if (phase === 'applying') return `<p class="hint" style="margin:0 0 6px">下载完成，正在校验…</p>${bar()}`;
+    return `<div class="callout ok">${icon('check-circle')}<div>正在重启到新版本，窗口会自己关掉再打开。</div></div>`;
+  };
+
+  const footer = () => {
+    if (phase === 'download') return '';
+    const closeBtn = `<button class="btn ghost" data-k="up-close">${phase === 'restarting' ? '关闭' : '以后再说'}</button>`;
+    if (phase === 'ready') {
+      return `${closeBtn}<button class="btn primary" data-k="up-go">${icon('download')}下载并更新</button>`;
+    }
+    if (phase === 'error' || phase === 'none') {
+      return `${closeBtn}<button class="btn ghost" data-k="up-recheck">${icon('refresh')}重新检查</button>`;
+    }
+    return closeBtn;
+  };
+
+  const paint = () => { m.setBody(body()); m.setFooter(footer()); };
+
+  async function check() {
+    phase = 'checking';
+    paint();
+    try {
+      const r = await (await fetch('/api/update/check', { cache: 'no-store' })).json();
+      if (!r.ok) { phase = 'error'; errMsg = r.error || '检查失败'; paint(); return; }
+      info = r;
+      phase = r.hasUpdate ? 'ready' : 'none';
+    } catch (e) {
+      phase = 'error';
+      errMsg = e.message || '网络错误';
+    }
+    paint();
+  }
+
+  async function downloadAndApply() {
+    phase = 'downloading';
+    got = 0;
+    total = Number(info.latest.size) || 0;
+    paint();
+    poll = setInterval(async () => {
+      try {
+        const p = await (await fetch('/api/update/progress', { cache: 'no-store' })).json();
+        if (p && p.progress) {
+          got = p.progress.received || 0;
+          if (p.progress.total) total = p.progress.total;
+          paint();
+        }
+      } catch { /* 忽略 */ }
+    }, 400);
+
+    try {
+      const r = await (await fetch('/api/update/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: info.latest.url }),
+      })).json();
+      clearInterval(poll);
+      if (!r.ok) throw new Error(r.error || '下载失败');
+      phase = 'applying';
+      paint();
+      const a = await (await fetch('/api/update/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sha256: info.latest.sha256, stamp: info.latest.stamp }),
+      })).json();
+      if (!a.ok) throw new Error(a.error || '更新失败');
+      phase = 'restarting';
+      paint();
+    } catch (e) {
+      clearInterval(poll);
+      phase = 'error';
+      errMsg = e.message || '更新失败';
+      paint();
+    }
+  }
+
+  m.el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-k]');
+    if (!b) return;
+    const k = b.dataset.k;
+    if (k === 'up-close') { clearInterval(poll); m.close(); }
+    if (k === 'up-recheck') check();
+    if (k === 'up-go') downloadAndApply();
+  });
+
+  check();
+  return m;
+}
+
+/* ========================================================================== */
 /* 规则编辑器                                                                 */
 /* ========================================================================== */
 

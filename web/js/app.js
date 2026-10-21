@@ -33,6 +33,8 @@ async function boot() {
   setTimeout(autoSync, 2600);
   loadMyName();
   pushUpdateConfig();
+  // 每次打开都检查一次更新（没配更新地址就不打扰）
+  setTimeout(() => { if (state.settings.manifestUrl) panels.openUpdate(); }, 3800);
 }
 
 /** 把「自动更新地址」同步给启动器（它读 data/update.json） */

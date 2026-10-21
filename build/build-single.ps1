@@ -30,14 +30,15 @@ if (Test-Path $exe) {
 }
 
 Write-Host '[1/5] 构建文件夹版'
-& (Join-Path $PSScriptRoot 'build.ps1') | Out-Host
+$stamp = Get-Date -Format 'yyyyMMddHHmmss'
+& (Join-Path $PSScriptRoot 'build.ps1') -Stamp $stamp | Out-Host
 
 $dist = Join-Path $root 'dist\日程舱'
 if (-not (Test-Path (Join-Path $dist 'server.js'))) { throw 'dist 不完整，构建失败' }
 
 Write-Host '[2/5] 生成 payload'
 $tmp = Join-Path $env:TEMP ('sd-payload-' + [guid]::NewGuid().ToString('N') + '.zip')
-$items = @('server.js', 'feishu.js', 'package.json', 'README-dist.txt', 'app.ico', 'web', 'runtime')
+$items = @('server.js', 'feishu.js', 'package.json', 'README-dist.txt', 'version.json', 'app.ico', 'web', 'runtime')
 Push-Location $dist
 try {
   tar -a -c -f $tmp @items
@@ -47,7 +48,6 @@ try {
 }
 
 Write-Host '[3/5] 生成构建标记'
-$stamp = Get-Date -Format 'yyyyMMddHHmmss'
 $stampFile = Join-Path $env:TEMP ('sd-stamp-' + [guid]::NewGuid().ToString('N') + '.txt')
 [System.IO.File]::WriteAllText($stampFile, $stamp, (New-Object System.Text.UTF8Encoding($false)))
 
