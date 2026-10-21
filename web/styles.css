@@ -193,13 +193,18 @@ a:hover { text-decoration: underline; }
 .side-title button:hover { background: var(--panel-2); color: var(--text); }
 
 .source-card {
-  margin: 0 4px;
+  margin: 0 4px 6px;
   border: 1px solid var(--line);
   background: var(--panel-2);
   border-radius: var(--radius);
   padding: 10px 11px;
   display: flex; flex-direction: column; gap: 7px;
+  transition: .14s;
 }
+.source-card.active { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--panel); box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }
+.source-card:not(.active) { cursor: pointer; }
+.source-card:not(.active):hover { border-color: var(--line-strong); background: var(--panel); }
+.source-card .icon-btn { width: 22px; height: 22px; margin-left: auto; flex: none; }
 .source-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-3) 14%, transparent); }
 .sync-dot.ok { background: #12B76A; box-shadow: 0 0 0 3px rgba(18, 183, 106, .14); }

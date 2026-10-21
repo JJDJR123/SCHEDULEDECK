@@ -44,12 +44,21 @@ async function loadMyName() {
   } catch { /* ignore */ }
 }
 
+/** 同步当前这条数据源：把它的链接一起带上，服务端才不会去同步「上次导入的那张表」 */
+function syncReq(src) {
+  return fetch('/api/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: src && src.url ? src.url : '' }),
+  });
+}
+
 async function autoSync() {
   const src = state.source;
   if (!src || src.kind !== 'feishu' || !src.url) return;
   if (Date.now() - (src.lastSync || 0) < 10 * 60 * 1000) return;
   try {
-    const res = await fetch('/api/sync', { method: 'POST' });
+    const res = await syncReq(src);
     const json = await res.json();
     if (json.ok) {
       applyImport(json.data);
@@ -103,7 +112,7 @@ async function syncNow() {
   const btn = document.getElementById('btnRefresh');
   setBusy(btn, true, '');
   try {
-    const res = await fetch('/api/sync', { method: 'POST' });
+    const res = await syncReq(src);
     const json = await res.json();
     if (!json.ok) throw new Error(json.error || '同步失败');
     applyImport(json.data);

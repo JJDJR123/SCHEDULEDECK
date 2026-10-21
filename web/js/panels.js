@@ -849,11 +849,13 @@ const FEISHU_STEPS = `
     <div class="step"><span>把表格链接、App ID、App Secret 填到下面，点「连接并导入」。</span></div>
   </div>`;
 
-export function openImport(tab = 'oauth') {
+export function openImport(tab = 'oauth', { asNew = false } = {}) {
   let pollTimer = 0;
+  // 新开一条数据源还是替换当前这条
+  const push = (data) => applyImport(data, { asNew });
   const m = modal({
-    title: '导入飞书表格',
-    subtitle: '扫码登录最省事；也可以用应用凭证或直接粘贴',
+    title: asNew ? '新增数据源' : '导入飞书表格',
+    subtitle: asNew ? '再挂一张表，侧栏可以随时切换' : '扫码登录最省事；也可以用应用凭证或直接粘贴',
     body: '',
     footer: '',
     onClose: () => clearInterval(pollTimer),
@@ -1073,7 +1075,7 @@ export function openImport(tab = 'oauth') {
         });
         const j = await res.json();
         if (!j.ok) throw new Error(j.error || '读取失败');
-        applyImport(j.data);
+        push(j.data);
         m.close();
         document.getElementById('searchInput').value = '';
         refresh();
@@ -1102,7 +1104,7 @@ export function openImport(tab = 'oauth') {
         });
         const json = await res.json();
         if (!json.ok) throw new Error(json.error || '导入失败');
-        applyImport(json.data);
+        push(json.data);
         m.close();
         document.getElementById('searchInput').value = '';
         refresh();
@@ -1137,7 +1139,7 @@ export function openImport(tab = 'oauth') {
     if (k === 'import-paste') {
       if (!lastPreview) lastPreview = parsePasted(m);
       if (!lastPreview) return;
-      applyImport({
+      push({
         headers: lastPreview.headers,
         rows: lastPreview.rows,
         source: { kind: 'paste', title: `粘贴导入 · ${fmtDate(Date.now(), 'MM-DD HH:mm')}`, url: '', mode: 'paste' },

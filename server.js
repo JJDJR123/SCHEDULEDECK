@@ -358,21 +358,25 @@ async function handler(req, res) {
 
     if (p === '/api/sync' && req.method === 'POST') {
       const cfg = readJson(CONFIG_FILE, {});
-      if (!cfg.url) {
+      // 多数据源：前端把当前这条的链接带上，避免同步到「上次导入的那张表」
+      let body = {};
+      try { body = await readBody(req); } catch { body = {}; }
+      const url = String((body && body.url) || cfg.url || '').trim();
+      if (!url) {
         return send(res, 200, { ok: false, error: '还没有保存表格链接，请先用「导入表格」连接一次' });
       }
       try {
         let data;
         if (cfg.mode === 'oauth') {
           const token = await ensureUserToken();
-          data = await feishu.load({ url: cfg.url, userToken: token });
+          data = await feishu.load({ url, userToken: token });
         } else {
           if (!cfg.appId || !cfg.appSecret) {
             return send(res, 200, { ok: false, error: '还没有保存应用凭证，请先用「导入表格」连接一次' });
           }
-          data = await feishu.load({ url: cfg.url, appId: cfg.appId, appSecret: cfg.appSecret });
+          data = await feishu.load({ url, appId: cfg.appId, appSecret: cfg.appSecret });
         }
-        writeJson(CONFIG_FILE, { ...cfg, updatedAt: Date.now() });
+        writeJson(CONFIG_FILE, { ...cfg, url: url || cfg.url || '', updatedAt: Date.now() });
         return send(res, 200, { ok: true, data });
       } catch (e) {
         return send(res, 200, { ok: false, error: e.message || String(e), code: e.code || null });

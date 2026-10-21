@@ -71,15 +71,20 @@ git add -A; git commit -m "..."; git push
 
 | 文件 | 内容 |
 | --- | --- |
-| `data/state.json` | 表、映射、排期配置、完成状态、规则、设置 |
-| `data/config.json` | App ID/Secret、当前表 URL、mode（oauth/feishu） |
+| `data/state.json` | **多数据源**：`state.sources[]`（每条 = `{id, meta, table, mapping, schedule}`）+ `activeId`，另有完成状态、规则、设置 |
+| `data/config.json` | App ID/Secret、**最近一次使用的表 URL**、mode（oauth/feishu） |
 | `data/oauth.json` | 用户 token（**敏感**） |
+
+- 侧栏「数据源」是卡片列表：点非当前那条即切换，`＋` 新增一条，`×` 移除；当前那条才有「同步 / 更换」。
+- `state.table/source/mapping/schedule` 只是**当前那条的镜像**，`flushActive()` 负责写回；`serialize()` 前会自动 flush。
+- 记录 id 带数据源前缀（`srcxxxx|s12:r1`），所以完成状态、提醒在不同表之间不会串。
+- 老存档（只有单张 `table`）在 `loadState` 里会自动迁移成一条数据源。
+- `/api/sync` 由前端带上 `url`，同步的就是当前这条，不会同步成「上次导入的那张表」。
 
 单文件版优先把 `data` 放在 exe 同级，不可写则回落 `%LOCALAPPDATA%\ScheduleDeck\data`。
 
 ## 7. 已知问题 / 待办
 
-- [ ] **多数据源**：改成 `state.sources[]`（表+映射+排期+缓存），侧栏多卡片切换；当前仍是单源「更换」
 - [ ] 方案 B 自动更新：私有 GitHub 源码 + 私有对象存储 `latest.json`（version/url/sha256），每小时检查、校验后退出替换重启
 - [ ] 档期异常格式（S1、第一赛季）归一；「全部/多选」的切回开关已有（`TAG_MULTI_SELECT`）
 - [ ] 行数超 5000 截断、超大表分批读取
@@ -105,6 +110,7 @@ git add -A; git commit -m "..."; git push
 
 ## 10. 变更记录
 
+- 2026-10-22：#24 多数据源（`state.sources[]` + `activeId`，侧栏卡片切换/新增/移除；记录 id 带数据源前缀；老存档自动迁移）；`/api/sync` 改为前端传 url，避免同步成上次导入的那张表
 - 2026-10-22：#23 手动选列（内容/期数/上线日 + 每个岗位的负责人列、日期列），在设置→字段映射里；最后一个日期列不让关
 - 2026-10-22：#22 侧栏档期/角色标签改单选（`TAG_MULTI_SELECT=false`，多选代码保留）；合并单元格负责人向下填充（`settings.fillDown`，整行空的不填）；未排期的行也出卡
 - 2026-10-21：#21 任务卡合并（一行内容一张卡，摊开动作/特效/策划/音效+里程碑）；岗位归属改按表头语义（配置完成→策划、音效独立岗位、验收/模型/原画当里程碑）；去掉左侧勾选框，只允许勾自己负责的块（`canEdit`）；新增「一行详情」抽屉 `openRow`

@@ -2,6 +2,7 @@
 import {
   state, setView, setFilter, resetFilters, toggleDone, filteredRecords, rowCardList,
   tagCounts, computeStats, save, DEFAULT_RULES, phaseList, canEdit, TAG_MULTI_SELECT,
+  switchSource, removeSource,
 } from './store.js';
 import { evalRules, resolveStyle, styleVars, describeRule, sampleRecord } from './rules.js';
 import { icon, toast } from './kit.js';
@@ -70,8 +71,8 @@ function renderNav() {
 
 function renderSource() {
   const el = document.getElementById('sideSource');
-  const src = state.source;
-  if (!src) {
+  const list = state.sources || [];
+  if (!list.length) {
     el.innerHTML = `
       <div class="side-title">数据源</div>
       <div class="source-card">
@@ -80,19 +81,29 @@ function renderSource() {
       </div>`;
     return;
   }
-  const demo = src.kind === 'demo';
-  const dot = demo ? 'warn' : (src.error ? 'warn' : 'ok');
-  const canSync = src.kind === 'feishu' && src.url;
   el.innerHTML = `
-    <div class="side-title">数据源</div>
-    <div class="source-card">
-      <div class="source-top"><span class="sync-dot ${dot}"></span><span class="source-name" title="${esc(src.title || '')}">${esc(src.title || '飞书表格')}</span></div>
-      <div class="source-meta">${demo ? '示例数据 · 仅供预览' : `${timeAgo(src.lastSync)} · ${src.rowCount || 0} 行`}</div>
-      <div class="source-actions">
-        <button class="btn sm ghost" data-act="sync" title="${canSync ? '从飞书重新读取' : '重新导入'}">${icon('refresh')}${canSync ? '同步' : '重新导入'}</button>
-        <button class="btn sm ghost" data-act="import" title="更换数据源">${icon('link')}更换</button>
-      </div>
-    </div>`;
+    <div class="side-title">数据源<button data-act="import-new" title="新增一个数据源">${icon('plus', 'sm')}</button></div>
+    ${list.map((s) => {
+      const meta = s.meta || {};
+      const active = s.id === state.activeId;
+      const demo = meta.kind === 'demo';
+      const dot = demo ? 'warn' : (meta.error ? 'warn' : 'ok');
+      const canSync = meta.kind === 'feishu' && meta.url;
+      const rows = s.table && s.table.rows ? s.table.rows.length : 0;
+      return `
+      <div class="source-card ${active ? 'active' : ''}" ${active ? '' : `data-act="source-switch" data-id="${esc(s.id)}" role="button" title="切换到 ${esc(meta.title || '这个数据源')}"`}>
+        <div class="source-top">
+          <span class="sync-dot ${dot}"></span>
+          <span class="source-name" title="${esc(meta.title || '')}">${esc(meta.title || '未命名数据源')}</span>
+          ${list.length > 1 ? `<button class="icon-btn" data-act="source-remove" data-id="${esc(s.id)}" title="移除这个数据源">${icon('x', 'sm')}</button>` : ''}
+        </div>
+        <div class="source-meta">${demo ? '示例数据 · 仅供预览' : `${timeAgo(meta.lastSync)} · ${rows} 行`}</div>
+        ${active ? `<div class="source-actions">
+          <button class="btn sm ghost" data-act="sync" title="${canSync ? '从飞书重新读取' : '重新导入'}">${icon('refresh')}${canSync ? '同步' : '重新导入'}</button>
+          <button class="btn sm ghost" data-act="import" title="更换这条数据源">${icon('link')}更换</button>
+        </div>` : ''}
+      </div>`;
+    }).join('')}`;
 }
 
 function renderTags() {
@@ -809,6 +820,19 @@ function onViewClick(e) {
       break;
     }
     case 'import': panels.openImport(); break;
+    case 'import-new': panels.openImport({ asNew: true }); break;
+    case 'source-switch': {
+      if (switchSource(b.dataset.id)) render();
+      break;
+    }
+    case 'source-remove': {
+      e.stopPropagation();
+      if (removeSource(b.dataset.id)) {
+        toast({ type: 'ok', title: '已移除这个数据源' });
+        render();
+      }
+      break;
+    }
     case 'rule-new': panels.openRuleEditor(null); break;
     case 'rule-edit': panels.openRuleEditor(id); break;
     case 'rule-toggle': {

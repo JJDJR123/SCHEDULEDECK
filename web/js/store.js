@@ -123,10 +123,73 @@ export const state = {
   records: [],
   rowCards: [],
   byId: new Map(),
+  // 多数据源：sources[].{ id, meta, table, mapping, schedule }，上面的 table/source/mapping/schedule 是「当前那一条」的镜像
+  sources: [],
+  activeId: '',
 };
 
 function emptyMapping() {
   return { title: -1, due: -1, status: -1, tags: -1, priority: -1, owner: -1, note: -1, id: -1 };
+}
+
+/* ------------------------------------------------------------------ 多数据源 */
+
+function newSourceId() {
+  return 'src' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+export function activeSource() {
+  return (state.sources || []).find((s) => s.id === state.activeId) || null;
+}
+
+/** 把当前镜像写回当前数据源（切源 / 保存前调用） */
+export function flushActive() {
+  const src = activeSource();
+  if (!src) return;
+  src.meta = state.source;
+  src.table = state.table;
+  src.mapping = state.mapping;
+  src.schedule = state.schedule;
+}
+
+function loadIntoMirrors(src) {
+  state.activeId = src ? src.id : '';
+  state.source = src ? src.meta : null;
+  state.table = src ? src.table : null;
+  state.mapping = src ? { ...emptyMapping(), ...(src.mapping || {}) } : emptyMapping();
+  state.schedule = src ? { ...DEFAULT_SCHEDULE, ...(src.schedule || {}) } : JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
+}
+
+/** 切到另一个数据源 */
+export function switchSource(id) {
+  if (id === state.activeId) return false;
+  const src = (state.sources || []).find((s) => s.id === id);
+  if (!src) return false;
+  flushActive();
+  loadIntoMirrors(src);
+  clearTransientFilters();
+  rebuild();
+  save();
+  return true;
+}
+
+/** 去掉某个数据源；当前那条被删掉就切到第一条 */
+export function removeSource(id) {
+  const list = state.sources || [];
+  const i = list.findIndex((s) => s.id === id);
+  if (i < 0) return false;
+  list.splice(i, 1);
+  if (state.activeId === id) {
+    loadIntoMirrors(list[0] || null);
+    clearTransientFilters();
+  }
+  rebuild();
+  save();
+  return true;
+}
+
+function clearTransientFilters() {
+  state.filters = { ...state.filters, q: '', tags: [], statuses: [], priority: [], role: 'all', phase: '' };
 }
 
 /* ------------------------------------------------------------------ 数据源 */
@@ -162,7 +225,7 @@ export function demoTable() {
   };
 }
 
-export function loadDemo() {
+export function loadDemo(asNew = true) {
   const t = demoTable();
   applyImport({
     headers: t.headers,
@@ -177,7 +240,7 @@ export function loadDemo() {
       appToken: '',
       mode: 'demo',
     },
-  });
+  }, { asNew });
 }
 
 const MONTH_DAY = /^\d{1,2}\s*[月\-/.]\s*\d{1,2}\s*日?$/;
@@ -339,22 +402,39 @@ export function detectSchedule(headers, rows) {
   };
 }
 
-export function applyImport(payload) {
+export function applyImport(payload, { asNew = false } = {}) {
   if (!payload || !Array.isArray(payload.headers)) throw new Error('数据格式不正确');
   const rows = (payload.rows || []).filter((r) => Array.isArray(r) && r.some((c) => String(c ?? '').trim() !== ''));
-  state.table = { headers: payload.headers.map((h) => String(h ?? '').trim()), rows };
-  state.source = {
+  const table = { headers: payload.headers.map((h) => String(h ?? '').trim()), rows };
+  const meta = {
     ...(payload.source || {}),
     lastSync: Date.now(),
     rowCount: rows.length,
-    colCount: payload.headers.length,
+    colCount: table.headers.length,
     error: '',
   };
-  if (state.source.mode === 'oauth' || state.source.mode === 'feishu') state.source.kind = 'feishu';
-  state.mapping = autoMap(state.table.headers, state.table.rows);
-  state.schedule = detectSchedule(state.table.headers, state.table.rows)
+  if (meta.mode === 'oauth' || meta.mode === 'feishu') meta.kind = 'feishu';
+  const mapping = autoMap(table.headers, table.rows);
+  const schedule = detectSchedule(table.headers, table.rows)
     || JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
-  state.filters = { q: '', bucket: 'all', tags: [], statuses: [], priority: [], mine: false, role: 'all' };
+
+  // asNew=true 时新开一条数据源，否则替换当前这条（没有就新建）
+  let src = asNew ? null : activeSource();
+  if (src) {
+    src.meta = meta;
+    src.table = table;
+    src.mapping = mapping;
+    src.schedule = schedule;
+  } else {
+    src = { id: newSourceId(), meta, table, mapping, schedule };
+    state.sources.push(src);
+  }
+  state.activeId = src.id;
+  state.source = meta;
+  state.table = table;
+  state.mapping = mapping;
+  state.schedule = schedule;
+  clearTransientFilters();
   rebuild();
   save(true);
   return state.records.length;
@@ -435,6 +515,10 @@ function isDoneStatus(status) {
   return (state.settings.doneKeywords || []).some((k) => k && s.includes(String(k).toLowerCase()));
 }
 
+function srcPrefix() {
+  return state.activeId ? `${state.activeId}|` : '';
+}
+
 export function rebuild() {
   state.records = [];
   state.byId = new Map();
@@ -503,7 +587,7 @@ function rebuildSchedule() {
         : [];
       const due = dueRaw ? parseMonthDay(dueRaw, baseTs) : null;
       const start = startRaw ? parseMonthDay(startRaw, baseTs) : null;
-      const id = `s${idx}:${role.key}`;
+      const id = srcPrefix() + `s${idx}:${role.key}`;
       const ov = state.overrides[id] || {};
       const isDone = (ov.done != null ? !!ov.done : done) || false;
 
@@ -598,6 +682,7 @@ function rebuildGeneric() {
 
     let id = m.id >= 0 ? String(cell('id') ?? '').trim() : '';
     if (!id) id = `h:${hash(title + '|' + (m.id >= 0 ? cell('id') : '') + '|' + idx)}`;
+    id = srcPrefix() + id;
     if (used.has(id)) id = id + '-' + idx;
     used.add(id);
 
@@ -892,13 +977,12 @@ export function setView(view) {
 /* ------------------------------------------------------------------ 持久化 */
 
 function serialize() {
+  flushActive();
   return {
     version: state.version,
     updatedAt: state.updatedAt,
-    table: state.table,
-    source: state.source,
-    mapping: state.mapping,
-    schedule: state.schedule,
+    sources: state.sources,
+    activeId: state.activeId,
     overrides: state.overrides,
     rules: state.rules,
     settings: state.settings,
@@ -942,17 +1026,31 @@ export async function loadState() {
     ? ((remote.updatedAt || 0) >= (local.updatedAt || 0) ? remote : local)
     : (remote || local);
 
-  if (!best || !best.table) {
+  if (!best || (!best.table && !(Array.isArray(best.sources) && best.sources.length))) {
     loadDemo();
     return { firstRun: true };
   }
 
   state.version = best.version || 1;
   state.updatedAt = best.updatedAt || 0;
-  state.table = best.table || null;
-  state.source = best.source || null;
-  state.mapping = { ...emptyMapping(), ...(best.mapping || {}) };
-  state.schedule = { ...DEFAULT_SCHEDULE, ...(best.schedule || {}) };
+
+  // 多数据源：新存档直接读 sources；老存档（单表）就地迁移成一条数据源
+  if (Array.isArray(best.sources) && best.sources.length) {
+    state.sources = best.sources;
+    state.activeId = best.sources.some((s) => s.id === best.activeId) ? best.activeId : best.sources[0].id;
+  } else if (best.table) {
+    const src = {
+      id: newSourceId(),
+      meta: best.source || { kind: 'paste', title: '未命名数据源' },
+      table: best.table,
+      mapping: best.mapping || emptyMapping(),
+      schedule: best.schedule || JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)),
+    };
+    state.sources = [src];
+    state.activeId = src.id;
+  }
+  loadIntoMirrors(activeSource());
+
   state.overrides = best.overrides || {};
   state.rules = Array.isArray(best.rules) && best.rules.length
     ? best.rules
@@ -979,6 +1077,8 @@ export async function loadState() {
 export function clearAll() {
   state.table = null;
   state.source = null;
+  state.sources = [];
+  state.activeId = '';
   state.mapping = emptyMapping();
   state.schedule = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
   state.overrides = {};
