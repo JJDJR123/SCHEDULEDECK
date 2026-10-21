@@ -44,7 +44,8 @@ export const DEFAULT_SETTINGS = {
   syncOnSwitch: false,
   myColor: '#5B5BF0',
   manifestUrl: '',
-  updateToken: '',
+  // 注意：不放 updateToken —— 更新用的只读 token 只存在磁盘上的 data/update.json，
+  // 不写 localStorage，也不经由页面回读
 };
 
 export const DEFAULT_SCHEDULE = {
@@ -124,7 +125,7 @@ export const state = {
   overrides: {},
   rules: JSON.parse(JSON.stringify(DEFAULT_RULES)),
   settings: { ...DEFAULT_SETTINGS },
-  filters: { q: '', bucket: 'all', tags: [], statuses: [], priority: [], mine: false, role: 'all' },
+  filters: { q: '', bucket: 'all', tags: [], statuses: [], priority: [], mine: false, owner: '', role: 'all' },
   ui: { view: 'overview' },
   reminders: { fired: {} },
   records: [],
@@ -259,7 +260,7 @@ export function removeSource(id) {
 }
 
 function clearTransientFilters() {
-  state.filters = { ...state.filters, q: '', tags: [], statuses: [], priority: [], role: 'all', phase: '' };
+  state.filters = { ...state.filters, q: '', tags: [], statuses: [], priority: [], role: 'all', phase: '', owner: '', mine: false };
 }
 
 /* ------------------------------------------------------------------ 数据源 */
@@ -826,11 +827,12 @@ export function filteredRecords({ ignoreBucket = false } = {}) {
   if (f.tags.length) list = list.filter((r) => r.tags.some((t) => f.tags.includes(t)));
   if (f.statuses.length) list = list.filter((r) => f.statuses.includes(r.status));
   if (f.priority.length) list = list.filter((r) => f.priority.includes(r.priority));
-  if (f.mine && state.settings.myName) {
-    const me = state.settings.myName.trim();
+  // 负责人筛选：'' 全部 / '@me' 我自己 / 具体某个人名
+  const who = ownerFilter();
+  if (who) {
     list = list.filter((r) => {
       const owners = r.owners && r.owners.length ? r.owners : [r.owner];
-      return owners.some((o) => o && (o.includes(me) || me.includes(o)));
+      return owners.some((o) => o && (o.includes(who) || who.includes(o)));
     });
   }
   if (f.role && f.role !== 'all') list = list.filter((r) => r.roleKey === f.role);
@@ -885,13 +887,16 @@ export function rowCardList({ ignoreBucket = false } = {}) {
   const me = String(state.settings.myName || '').trim();
   const onlyRole = f.role && f.role !== 'all' ? f.role : '';
 
-  // 「只看我的」不只筛卡片，卡上的别人的块也一起去掉（里程碑不属于谁，一并隐藏）
-  const mineOnly = !!(f.mine && me);
+  // 选了某个人：把卡上不是他的岗位块去掉（里程碑不属于谁，一并隐藏）
+  const whoWanted = ownerFilter();
   let cards = (state.rowCards || []).map((card) => {
     let recs = onlyRole ? card.recs.filter((r) => r.roleKey === onlyRole) : card.recs;
-    if (mineOnly) recs = recs.filter((r) => canEdit(r));
-    return { ...card, recs, milestones: mineOnly ? [] : card.milestones };
-  }).filter((c) => c.recs.length || (!onlyRole && !mineOnly && c.unplanned));
+    if (whoWanted) {
+      recs = recs.filter((r) => (r.owners && r.owners.length ? r.owners : [r.owner])
+        .some((o) => o && (o.includes(whoWanted) || whoWanted.includes(o))));
+    }
+    return { ...card, recs, milestones: whoWanted ? [] : card.milestones };
+  }).filter((c) => c.recs.length || (!onlyRole && !whoWanted && c.unplanned));
 
   cards.forEach((c) => {
     const open = c.recs.filter((r) => !r.done);
@@ -907,7 +912,6 @@ export function rowCardList({ ignoreBucket = false } = {}) {
 
   if (f.tags.length) cards = cards.filter((c) => c.recs.some((r) => r.tags.some((t) => f.tags.includes(t))));
   if (f.phase) cards = cards.filter((c) => c.phase === f.phase);
-  if (f.mine && me) cards = cards.filter((c) => c.mine);
   if (f.statuses.length) cards = cards.filter((c) => c.recs.some((r) => f.statuses.includes(r.status)));
   if (f.priority.length) cards = cards.filter((c) => c.recs.some((r) => f.priority.includes(r.priority)));
   if (q) {
@@ -946,6 +950,27 @@ export function rowCardList({ ignoreBucket = false } = {}) {
     return a.due - b.due;
   });
   return cards;
+}
+
+/** 当前「看谁」：'' 全部 / '@me' 我 / 名字 */
+export function ownerFilter() {
+  const f = state.filters;
+  const pick = f.owner || (f.mine ? '@me' : '');
+  if (!pick) return '';
+  if (pick === '@me') return String(state.settings.myName || '').trim();
+  return pick;
+}
+
+/** 表格里出现过的所有负责人（给下拉用） */
+export function ownerOptions() {
+  const set = new Set();
+  (state.records || []).forEach((r) => {
+    (r.owners && r.owners.length ? r.owners : [r.owner]).forEach((o) => {
+      const v = String(o || '').trim();
+      if (v) set.add(v);
+    });
+  });
+  return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'));
 }
 
 export function computeStats() {
@@ -1038,7 +1063,7 @@ export function setFilter(patch) {
 }
 
 export function resetFilters() {
-  state.filters = { q: '', bucket: 'all', tags: [], statuses: [], priority: [], mine: false, role: 'all' };
+  state.filters = { q: '', bucket: 'all', tags: [], statuses: [], priority: [], mine: false, owner: '', role: 'all' };
   save();
 }
 
@@ -1132,6 +1157,8 @@ export async function loadState() {
     : JSON.parse(JSON.stringify(DEFAULT_RULES));
   const savedSettings = best.settings || {};
   state.settings = { ...DEFAULT_SETTINGS, ...savedSettings };
+  // 旧版本把更新 token 存在过设置里，统一清掉（现在只放磁盘）
+  delete state.settings.updateToken;
   // 老存档一次性把「向下填充」关掉（它会把空着的负责人算成上一个人）
   if ((savedSettings.fillDownVer || 1) < 2) {
     state.settings.fillDown = false;

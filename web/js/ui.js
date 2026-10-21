@@ -2,7 +2,7 @@
 import {
   state, setView, setFilter, resetFilters, toggleDone, filteredRecords, rowCardList,
   tagCounts, computeStats, save, DEFAULT_RULES, phaseList, canEdit, TAG_MULTI_SELECT,
-  switchSource, removeSource,
+  switchSource, removeSource, ownerOptions,
 } from './store.js';
 import { evalRules, resolveStyle, styleVars, describeRule, sampleRecord } from './rules.js';
 import { icon, toast } from './kit.js';
@@ -338,6 +338,10 @@ function toolbar() {
       <button class="chip ${f.role === 'all' ? 'active' : ''}" data-act="role" data-role="all">全部角色</button>
       ${(S.roles || []).map((r) => `<button class="chip ${f.role === r.key ? 'active' : ''}" data-act="role" data-role="${esc(r.key)}">${esc(r.name)}</button>`).join('')}
       ${state.settings.myName ? `<button class="chip ${f.mine ? 'active' : ''}" data-act="mine">${icon('user', 'sm')}只看我的 · ${esc(state.settings.myName)}</button>` : ''}
+      <select class="select" data-role="owner" title="换个人看">
+        <option value="" ${!f.owner ? 'selected' : ''}>全部负责人</option>
+        ${ownerOptions().map((o) => `<option value="${esc(o)}" ${f.owner === o ? 'selected' : ''}>${esc(o)}${o === state.settings.myName ? '（我）' : ''}</option>`).join('')}
+      </select>
     </div>
     <span class="spacer"></span>
     <span class="hint">档期基准 ${esc(S.baseDate || '—')}</span>
@@ -929,6 +933,11 @@ function onViewChange(e) {
   if (el.dataset.role === 'sort') {
     state.settings.sortBy = el.value;
     save();
+    render({ keepScroll: true });
+    return;
+  }
+  if (el.dataset.role === 'owner') {
+    setFilter({ owner: el.value, mine: false });
     render({ keepScroll: true });
   }
 }

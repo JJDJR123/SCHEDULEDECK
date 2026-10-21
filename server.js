@@ -538,10 +538,14 @@ async function handler(req, res) {
     }
 
     if (p === '/api/update-config') {
-      // 自动更新配置：前端改，启动器读
+      // 自动更新配置：前端改，启动器读。token 只留在磁盘，不回传给页面
       const UPDATE_FILE = path.join(DATA, 'update.json');
       if (req.method === 'GET') {
-        return send(res, 200, { ok: true, config: readJson(UPDATE_FILE, {}) });
+        const cfg = readJson(UPDATE_FILE, {});
+        return send(res, 200, {
+          ok: true,
+          config: { manifestUrl: cfg.manifestUrl || '', auto: cfg.auto !== false, hasToken: !!cfg.token },
+        });
       }
       let body = {};
       try { body = await readBody(req); } catch { body = {}; }
@@ -549,12 +553,13 @@ async function handler(req, res) {
       const next = {
         ...cur,
         manifestUrl: String(body.manifestUrl != null ? body.manifestUrl : cur.manifestUrl || '').trim(),
-        token: String(body.token != null ? body.token : cur.token || '').trim(),
         auto: body.auto != null ? !!body.auto : cur.auto !== false,
         updatedAt: Date.now(),
       };
+      // token 只在显式传了才改（空字符串 = 清除）
+      if (body.token != null) next.token = String(body.token).trim();
       writeJson(UPDATE_FILE, next);
-      return send(res, 200, { ok: true, config: next });
+      return send(res, 200, { ok: true, config: { manifestUrl: next.manifestUrl, auto: next.auto, hasToken: !!next.token } });
     }
 
     if (p === '/api/open-browser' && req.method === 'POST') {

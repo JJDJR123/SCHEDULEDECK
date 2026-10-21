@@ -839,7 +839,7 @@ export function openSettings(tab = 'source') {
     return `
       <div class="callout ok" style="margin-top:0">${icon('check-circle')}<div>已识别为「排期表」：一行一个内容，按 ${S.roles.length} 个角色分组，共 ${state.records.length} 条角色任务。</div></div>
       <div class="row">
-        <div class="field"><label>我的名字 <span class="opt">用于「只看我的」</span></label><input class="input" data-k="my-name" value="${esc(state.settings.myName || '')}" placeholder="例如：吴铭华" /></div>
+        <div class="field"><label>我的名字 <span class="opt">登录后自动取飞书账号名</span></label><input class="input" data-k="my-name" value="${esc(state.settings.myName || '')}" placeholder="例如：吴铭华" /></div>
         <div class="field"><label>档期基准日</label><input class="input" type="date" data-k="base-date" value="${esc(S.baseDate || '')}" /></div>
       </div>
       <p class="hint" style="margin-top:-6px">表里只有「10月24日」这种写法，用基准日补年份：基准日前 30 天内的算今年，跨年的自动算下一年，不会改表格。</p>
@@ -970,8 +970,8 @@ export function openSettings(tab = 'source') {
         <p class="hint">留空 = 不检查。填好后：托盘右键「检查更新…」手动查，或每小时自动查一次；发现新版本会弹窗确认，下载后校验 sha256 再替换重启。生成清单用 <code>build/make-manifest.ps1</code>。</p>
       </div>
       <div class="field">
-        <label>只读 token <span class="opt">私有仓库 / 私有存储才需要，公开直链留空</span></label>
-        <input class="input" type="password" data-k="update-token" value="${esc(state.settings.updateToken || '')}" placeholder="ghp_… / github_pat_…" autocomplete="off" />
+        <label>只读 token <span class="opt">私有仓库 / 私有存储才需要；只存在本机磁盘，不进浏览器存储</span></label>
+        <input class="input" type="password" data-k="update-token" value="" placeholder="留空 = 保持不变（填了才会更新）" autocomplete="new-password" />
         <p class="hint">只用于读 latest.json 和下载 exe。GitHub 建议用 Fine-grained token，仓库只勾这一个、权限只给 <b>Contents: Read</b>。</p>
       </div>
       <div class="field" style="margin-top:20px">
@@ -1144,14 +1144,16 @@ export function openSettings(tab = 'source') {
     if (k === 'digest') { state.settings.dailyDigest = t.value; save(); }
     if (k === 'manifest-url' || k === 'update-token') {
       if (k === 'manifest-url') state.settings.manifestUrl = t.value.trim();
-      else state.settings.updateToken = t.value.trim();
+      const patch = { manifestUrl: state.settings.manifestUrl };
+      if (k === 'update-token') patch.token = t.value.trim();
       save();
       // 启动器 / 服务端读的是 data/update.json，这里同步过去
       fetch('/api/update-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manifestUrl: state.settings.manifestUrl, token: state.settings.updateToken }),
+        body: JSON.stringify(patch),
       }).then((r) => r.json()).then((j) => {
+        if (k === 'update-token' && j && j.ok) t.value = '';   // 存进去之后就别留在输入框里
         toast(j.ok ? { type: 'ok', title: '更新设置已保存', text: j.config.manifestUrl || '（已清空，不再检查更新）' }
           : { type: 'err', title: '保存失败', text: j.error || '' });
       }).catch(() => {});
@@ -1303,11 +1305,15 @@ export function openImport(tab = 'oauth', opts = {}) {
         ${icon('info')}<div>用你自己的飞书账号授权，APP 以你的身份读表：<b>不需要</b>「添加文档应用」，也不用把应用加进知识库 / 共享空间。</div>
       </div>
       <div class="row">
-        <div class="field"><label>App ID</label><input class="input" id="oaAppId" placeholder="cli_xxxxxxxx" autocomplete="off" /></div>
-        <div class="field"><label>App Secret</label><input class="input" id="oaSecret" type="password" placeholder="留空则使用已保存的" autocomplete="off" /></div>
+        <div class="field" style="flex:1">
+          <label>App Secret <span class="opt">App ID 已内置，不用管</span></label>
+          <input class="input" id="oaSecret" type="password" placeholder="留空 = 用本机已保存的" autocomplete="new-password" name="sd-secret-${Date.now()}" />
+        </div>
       </div>
+      <button class="btn primary" data-k="oauth-login" style="width:100%;height:44px;font-size:14.5px;justify-content:center;margin-bottom:8px">
+        ${icon('user')}用飞书登录
+      </button>
       <div class="row" style="align-items:center;margin-bottom:4px">
-        <button class="btn primary" data-k="oauth-login" style="flex:none">${icon('user')}用飞书登录</button>
         <span class="hint" id="oaStatus" style="flex:1">正在检查登录状态…</span>
       </div>
       <div class="callout ok" id="oaUser" hidden style="margin:10px 0"></div>
@@ -1324,7 +1330,7 @@ export function openImport(tab = 'oauth', opts = {}) {
         <div class="steps" style="margin-top:8px">
           <div class="step"><span>开发者后台 → 你的应用 →「安全设置」→ 重定向 URL，添加 <code>http://127.0.0.1:17899/callback</code></span></div>
           <div class="step"><span>「权限管理」加 <code>offline_access</code>、<code>sheets:spreadsheet:readonly</code>、<code>wiki:wiki:readonly</code>（用多维表格再加 <code>bitable:app:readonly</code>）。</span></div>
-          <div class="step"><span>填上面的 App ID / Secret，点「用飞书登录」；浏览器里扫码或确认授权。</span></div>
+          <div class="step"><span>填上面的 App Secret（App ID 已经内置好），点「用飞书登录」；浏览器里扫码或确认授权。</span></div>
           <div class="step"><span>回到这里点「读取这张表」即可，之后刷新会自动续期。</span></div>
         </div>
       </details>`;
@@ -1447,13 +1453,11 @@ export function openImport(tab = 'oauth', opts = {}) {
     }
 
     if (k === 'oauth-login') {
-      const appIdEl = m.el.querySelector('#oaAppId');
       const secretEl = m.el.querySelector('#oaSecret');
       const urlEl = m.el.querySelector('#oaUrl');
-      const appId = appIdEl ? appIdEl.value.trim() : '';
+      const appId = '';   // App ID 内置在服务端，不在这里填
       const appSecret = secretEl ? secretEl.value.trim() : '';
       const url = urlEl ? urlEl.value.trim() : '';
-      if (!appId) { toast({ type: 'warn', title: '先填 App ID' }); return; }
       setBusy(b, true, '准备授权…');
       try {
         const res = await fetch('/api/oauth/start', {
