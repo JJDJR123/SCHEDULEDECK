@@ -135,10 +135,71 @@ export const state = {
   activeId: '',
   // 飞书登录状态（不落盘，开机时从 /api/oauth/status 拉）
   auth: { loggedIn: false, user: null, hasSecret: false },
+  // 每个飞书账号一份缓存：users[open_id] = { sources, activeId, overrides }
+  userId: '',
+  users: {},
 };
 
 function emptyMapping() {
   return { title: -1, due: -1, status: -1, tags: -1, priority: -1, owner: -1, note: -1, id: -1 };
+}
+
+/* ------------------------------------------------------------------ 按人隔离的缓存 */
+
+/** 把当前这份数据写回当前账号的缓存（未登录时不写） */
+function saveUserBucket() {
+  if (!state.userId) return;
+  state.users[state.userId] = {
+    sources: state.sources,
+    activeId: state.activeId,
+    overrides: state.overrides,
+  };
+}
+
+/**
+ * 切换当前账号：先把上一个人的写回去，再加载这个人的；
+ * 传空字符串 = 登出，界面清空但功能都在。
+ */
+export function applyUser(userId) {
+  const nextId = String(userId || '');
+  if (nextId === state.userId) return false;
+  flushActive();
+  saveUserBucket();
+
+  // 老存档（只有一份数据，没有 users）迁移给第一个登录的人
+  const others = Object.keys(state.users).filter((k) => k !== 'legacy');
+  if (nextId && !state.users[nextId] && state.users.legacy && others.length === 0) {
+    state.users[nextId] = state.users.legacy;
+    delete state.users.legacy;
+  }
+
+  state.userId = nextId;
+  const bucket = nextId ? state.users[nextId] : null;
+  if (bucket) {
+    state.sources = bucket.sources || [];
+    state.activeId = bucket.activeId || '';
+    state.overrides = bucket.overrides || {};
+    loadIntoMirrors(activeSource());
+    // 识别规则升级过：按新规则重算角色（保留档期基准日）
+    if (state.schedule.enabled && state.table && (state.schedule.v || 1) < DETECT_VERSION) {
+      const re = detectSchedule(state.table.headers, state.table.rows);
+      if (re) state.schedule = { ...re, baseDate: state.schedule.baseDate || re.baseDate };
+    }
+  } else {
+    state.sources = [];
+    state.activeId = '';
+    state.overrides = {};
+    loadIntoMirrors(null);
+  }
+  clearTransientFilters();
+  rebuild();
+  save(true);   // 换人 / 登出必须立刻落盘
+  return true;
+}
+
+/** 登出：清界面上的数据（缓存已写回原账号名下） */
+export function logoutLocal() {
+  applyUser('');
 }
 
 /* ------------------------------------------------------------------ 多数据源 */
@@ -990,12 +1051,12 @@ export function setView(view) {
 
 function serialize() {
   flushActive();
+  saveUserBucket();
   return {
     version: state.version,
     updatedAt: state.updatedAt,
-    sources: state.sources,
-    activeId: state.activeId,
-    overrides: state.overrides,
+    userId: state.userId,
+    users: state.users,
     rules: state.rules,
     settings: state.settings,
     filters: state.filters,
@@ -1038,32 +1099,34 @@ export async function loadState() {
     ? ((remote.updatedAt || 0) >= (local.updatedAt || 0) ? remote : local)
     : (remote || local);
 
-  if (!best || (!best.table && !(Array.isArray(best.sources) && best.sources.length))) {
-    loadDemo();
+  if (!best) {
     return { firstRun: true };
   }
 
   state.version = best.version || 1;
   state.updatedAt = best.updatedAt || 0;
 
-  // 多数据源：新存档直接读 sources；老存档（单表）就地迁移成一条数据源
-  if (Array.isArray(best.sources) && best.sources.length) {
-    state.sources = best.sources;
-    state.activeId = best.sources.some((s) => s.id === best.activeId) ? best.activeId : best.sources[0].id;
-  } else if (best.table) {
-    const src = {
-      id: newSourceId(),
-      meta: best.source || { kind: 'paste', title: '未命名数据源' },
-      table: best.table,
-      mapping: best.mapping || emptyMapping(),
-      schedule: best.schedule || JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)),
-    };
-    state.sources = [src];
-    state.activeId = src.id;
+  // 缓存按账号分开存：users[open_id] = { sources, activeId, overrides }
+  if (best.users && typeof best.users === 'object') {
+    state.users = best.users;
   }
-  loadIntoMirrors(activeSource());
+  // 老存档兼容：单份数据（sources 或单表 table）先挂到 legacy，登录后归给第一个账号
+  if (!Object.keys(state.users).length) {
+    if (Array.isArray(best.sources) && best.sources.length) {
+      const activeId = best.sources.some((s) => s.id === best.activeId) ? best.activeId : best.sources[0].id;
+      state.users.legacy = { sources: best.sources, activeId, overrides: best.overrides || {} };
+    } else if (best.table) {
+      const src = {
+        id: newSourceId(),
+        meta: best.source || { kind: 'paste', title: '未命名数据源' },
+        table: best.table,
+        mapping: best.mapping || emptyMapping(),
+        schedule: best.schedule || JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)),
+      };
+      state.users.legacy = { sources: [src], activeId: src.id, overrides: best.overrides || {} };
+    }
+  }
 
-  state.overrides = best.overrides || {};
   state.rules = Array.isArray(best.rules) && best.rules.length
     ? best.rules
     : JSON.parse(JSON.stringify(DEFAULT_RULES));
@@ -1078,17 +1141,8 @@ export async function loadState() {
   state.ui = { ...state.ui, ...(best.ui || {}) };
   state.reminders = { fired: {}, ...(best.reminders || {}) };
 
-  // 识别规则升级过：老存档按新规则重算角色（保留档期基准日）。
-  // 必须等下面所有字段都恢复完再存，否则会把空的 overrides 写回磁盘。
-  const staleSchedule = state.schedule.enabled && state.table
-    && (state.schedule.v || 1) < DETECT_VERSION;
-  if (staleSchedule) {
-    const re = detectSchedule(state.table.headers, state.table.rows);
-    if (re) state.schedule = { ...re, baseDate: state.schedule.baseDate || re.baseDate };
-  }
-
+  // 真正加载哪个账号的数据，等 boot 拿到登录状态后调 applyUser()
   rebuild();
-  if (staleSchedule) save();
   return { firstRun: false };
 }
 
@@ -1097,6 +1151,8 @@ export function clearAll() {
   state.source = null;
   state.sources = [];
   state.activeId = '';
+  state.users = {};
+  state.userId = '';
   state.mapping = emptyMapping();
   state.schedule = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
   state.overrides = {};

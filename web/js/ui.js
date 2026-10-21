@@ -73,11 +73,12 @@ function renderSource() {
   const el = document.getElementById('sideSource');
   const list = state.sources || [];
   if (!list.length) {
+    const logged = !!(state.auth && state.auth.loggedIn);
     el.innerHTML = `
       <div class="side-title">数据源</div>
       <div class="source-card">
-        <div class="source-meta">尚未导入表格</div>
-        <button class="btn sm primary" data-act="import">${icon('plus')}导入飞书表格</button>
+        <div class="source-meta">${logged ? '尚未导入表格' : '未登录 · 登录后显示数据源'}</div>
+        <button class="btn sm ${logged ? 'primary' : 'ghost'}" data-act="${logged ? 'import' : 'login'}">${icon(logged ? 'plus' : 'user')}${logged ? '导入飞书表格' : '去登录'}</button>
       </div>`;
     return;
   }
@@ -514,6 +515,22 @@ function taskCard(rec, now) {
 function emptyState() {
   const hasFilter = state.filters.q || state.filters.bucket !== 'all' || state.filters.tags.length
     || state.filters.statuses.length || state.filters.priority.length;
+  const logged = !!(state.auth && state.auth.loggedIn);
+
+  // 没登录：功能都在，但没有任何数据
+  if (!logged) {
+    return `
+    <div class="empty">
+      <div class="empty-icon">${icon('user')}</div>
+      <h3>还没登录飞书</h3>
+      <p>登录之后才会显示你表格里的排期。现在可以随便点点看看功能，不会留下任何缓存。</p>
+      <div class="actions">
+        <button class="btn primary" data-act="login">${icon('user')}去登录</button>
+        <button class="btn ghost" data-act="import">${icon('clipboard')}粘贴导入</button>
+      </div>
+    </div>`;
+  }
+
   return `
   <div class="empty">
     <div class="empty-icon">${icon(hasFilter ? 'filter' : 'inbox')}</div>
@@ -729,6 +746,7 @@ export function initUI() {
     if (!b) return;
     const act = b.dataset.act;
     if (act === 'import') { panels.openImport(); return; }
+    if (act === 'login') { panels.openImport('oauth'); return; }
     if (act === 'import-new') { panels.openImport({ asNew: true }); return; }
     if (act === 'sync') { window.__syncNow && window.__syncNow(); return; }
     if (act === 'source-switch') {
@@ -842,6 +860,7 @@ function onViewClick(e) {
       break;
     }
     case 'import': panels.openImport(); break;
+    case 'login': panels.openImport('oauth'); break;
     case 'import-new': panels.openImport({ asNew: true }); break;
     case 'source-switch': {
       if (switchSource(b.dataset.id)) render();

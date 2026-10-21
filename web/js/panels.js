@@ -2,7 +2,7 @@
 import {
   state, save, toggleDone, setOverride, setMapping, applyImport, loadDemo,
   clearAll, exportJSON, autoMap, DEFAULT_RULES, rebuild, detectSchedule, canEdit,
-  setScheduleCol, setRoleOwnerCol, toggleRoleDateCol,
+  setScheduleCol, setRoleOwnerCol, toggleRoleDateCol, applyUser, logoutLocal,
 } from './store.js';
 import {
   evalRules, resolveStyle, styleVars, FIELDS, PALETTE, newRule, sampleRecord,
@@ -311,6 +311,16 @@ export function openIdea() {
 /* ========================================================================== */
 
 const fmtMB = (n) => (n ? (n / 1024 / 1024).toFixed(1) + ' MB' : '—');
+
+/** 导入/登录之后，把当前会话归到正确的账号名下（缓存按人隔离） */
+async function adoptCurrentUser() {
+  try {
+    const j = await (await fetch('/api/oauth/status', { cache: 'no-store' })).json();
+    state.auth = { loggedIn: !!(j && j.loggedIn), user: (j && j.user) || null, hasSecret: !!(j && j.hasSecret) };
+    const uid = j && j.loggedIn && j.user ? (j.user.open_id || j.user.openId || j.user.name || '') : '';
+    applyUser(uid);
+  } catch { /* 离线就算了 */ }
+}
 
 export function openUpdate() {
   let phase = 'checking';
@@ -996,7 +1006,8 @@ export function openSettings(tab = 'source') {
       try {
         await fetch('/api/oauth/logout', { method: 'POST' });
         state.auth = { ...(state.auth || {}), loggedIn: false, user: null };
-        toast({ type: 'ok', title: '已退出登录', text: '下次同步前记得重新登录' });
+        logoutLocal();               // 清掉界面上的缓存数据，功能还在
+        toast({ type: 'ok', title: '已退出登录', text: '数据已收起，重新登录后还在' });
       } catch (err) {
         toast({ type: 'err', title: '退出失败', text: err.message });
       }
@@ -1479,6 +1490,7 @@ export function openImport(tab = 'oauth', opts = {}) {
         });
         const j = await res.json();
         if (!j.ok) throw new Error(j.error || '读取失败');
+        await adoptCurrentUser();   // 先落到「当前登录账号」的缓存里
         push(j.data);
         m.close();
         document.getElementById('searchInput').value = '';

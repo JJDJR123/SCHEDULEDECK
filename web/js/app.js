@@ -1,5 +1,5 @@
 /* 日程舱 — 启动与全局逻辑 */
-import { state, loadState, applyImport, toggleDone, save } from './store.js';
+import { state, loadState, applyImport, toggleDone, save, applyUser } from './store.js';
 import { initUI, render } from './ui.js';
 import * as panels from './panels.js';
 import { start as startReminders, setNotifier, warmAudio, snooze } from './reminders.js';
@@ -68,8 +68,11 @@ async function loadMyName() {
     if (j && j.loggedIn && j.user && j.user.name && !state.settings.myName) {
       state.settings.myName = j.user.name;
       save();
-      render();
     }
+    // 按账号加载各自的缓存：没登录就是空的
+    const uid = j && j.loggedIn && j.user ? (j.user.open_id || j.user.openId || j.user.name || '') : '';
+    applyUser(uid);
+    render();
   } catch { /* ignore */ }
 }
 
