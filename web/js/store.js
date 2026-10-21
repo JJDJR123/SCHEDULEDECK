@@ -37,7 +37,10 @@ export const DEFAULT_SETTINGS = {
   sortBy: 'due',
   showDone: true,
   myName: '',
-  fillDown: true,
+  // 合并单元格向下填充：默认关。很多表里「负责人」空着就是还没排人，
+  // 填上会凭空多出「这行是他的」……需要的话在 排期设置 里手动打开。
+  fillDown: false,
+  fillDownVer: 2,
   syncOnSwitch: false,
   myColor: '#5B5BF0',
   manifestUrl: '',
@@ -818,10 +821,13 @@ export function rowCardList({ ignoreBucket = false } = {}) {
   const me = String(state.settings.myName || '').trim();
   const onlyRole = f.role && f.role !== 'all' ? f.role : '';
 
-  let cards = (state.rowCards || []).map((card) => ({
-    ...card,
-    recs: onlyRole ? card.recs.filter((r) => r.roleKey === onlyRole) : card.recs,
-  })).filter((c) => c.recs.length || (!onlyRole && c.unplanned));
+  // 「只看我的」不只筛卡片，卡上的别人的块也一起去掉（里程碑不属于谁，一并隐藏）
+  const mineOnly = !!(f.mine && me);
+  let cards = (state.rowCards || []).map((card) => {
+    let recs = onlyRole ? card.recs.filter((r) => r.roleKey === onlyRole) : card.recs;
+    if (mineOnly) recs = recs.filter((r) => canEdit(r));
+    return { ...card, recs, milestones: mineOnly ? [] : card.milestones };
+  }).filter((c) => c.recs.length || (!onlyRole && !mineOnly && c.unplanned));
 
   cards.forEach((c) => {
     const open = c.recs.filter((r) => !r.done);
@@ -1058,7 +1064,13 @@ export async function loadState() {
   state.rules = Array.isArray(best.rules) && best.rules.length
     ? best.rules
     : JSON.parse(JSON.stringify(DEFAULT_RULES));
-  state.settings = { ...DEFAULT_SETTINGS, ...(best.settings || {}) };
+  const savedSettings = best.settings || {};
+  state.settings = { ...DEFAULT_SETTINGS, ...savedSettings };
+  // 老存档一次性把「向下填充」关掉（它会把空着的负责人算成上一个人）
+  if ((savedSettings.fillDownVer || 1) < 2) {
+    state.settings.fillDown = false;
+    state.settings.fillDownVer = 2;
+  }
   state.filters = { ...state.filters, ...(best.filters || {}) };
   state.ui = { ...state.ui, ...(best.ui || {}) };
   state.reminders = { fired: {}, ...(best.reminders || {}) };
