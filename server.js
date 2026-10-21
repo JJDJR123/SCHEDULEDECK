@@ -48,14 +48,24 @@ function sha256File(file) {
   return h.digest('hex');
 }
 
-async function downloadUpdate(url) {
+/** 私有仓库 / 私有存储：可以在 data/update.json 里配一个只读 token */
+function authHeaders(cfg) {
+  const h = { 'Cache-Control': 'no-cache', 'User-Agent': 'ScheduleDeck' };
+  const token = String((cfg && cfg.token) || '').trim();
+  if (token) h.Authorization = 'Bearer ' + token;
+  return h;
+}
+
+async function downloadUpdate(url, headers) {
   updateState = { phase: 'downloading', received: 0, total: 0, error: '', file: '' };
   const dir = path.join(DATA, 'update');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'new.exe');
   try { fs.unlinkSync(file); } catch { /* 没有就算了 */ }
 
-  const res = await fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
+  const res = await fetch(url, {
+    headers: { ...(headers || { 'Cache-Control': 'no-cache' }), Accept: 'application/octet-stream' },
+  });
   if (!res.ok) throw new Error('下载失败：HTTP ' + res.status);
   updateState.total = Number(res.headers.get('content-length') || 0);
 
@@ -463,7 +473,7 @@ async function handler(req, res) {
         return send(res, 200, { ok: false, error: '还没有配置更新地址', current: cur });
       }
       try {
-        const r = await fetch(manifestUrl, { headers: { 'Cache-Control': 'no-cache' } });
+        const r = await fetch(manifestUrl, { headers: authHeaders(cfg) });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const latest = await r.json();
         if (!latest || !latest.stamp || !latest.url) throw new Error('latest.json 缺字段');
@@ -483,7 +493,8 @@ async function handler(req, res) {
       try { body = await readBody(req); } catch { body = {}; }
       const url = String((body && body.url) || '').trim();
       if (!/^https?:\/\//i.test(url)) return send(res, 200, { ok: false, error: '更新地址不合法' });
-      downloadUpdate(url).then(
+      const cfg = readJson(path.join(DATA, 'update.json'), {});
+      downloadUpdate(url, authHeaders(cfg)).then(
         () => send(res, 200, { ok: true, progress: updateState }),
         (e) => { updateState.phase = 'error'; updateState.error = e.message || String(e); send(res, 200, { ok: false, error: updateState.error }); },
       );
@@ -532,6 +543,7 @@ async function handler(req, res) {
       const next = {
         ...cur,
         manifestUrl: String(body.manifestUrl != null ? body.manifestUrl : cur.manifestUrl || '').trim(),
+        token: String(body.token != null ? body.token : cur.token || '').trim(),
         auto: body.auto != null ? !!body.auto : cur.auto !== false,
         updatedAt: Date.now(),
       };

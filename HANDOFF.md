@@ -129,6 +129,7 @@ git add -A; git commit -m "..."; git push
 
 ## 11. 变更记录
 
+- 2026-10-22：#32 更新支持私有源：data/update.json 可配只读 token（Authorization: Bearer + Accept: application/octet-stream），设置 → 自动更新里填；GitHub 私有 release 也能拉
 - 2026-10-22：#31 顶栏「我有个想法🤓👆」：弹窗里填默认 JSON 模板，提交写到 data/suggestions/<名字>/<时间戳>.json；仓库新增 建议/ 文件夹（按人分目录）+ tools/collect-suggestions.ps1 收集
 - 2026-10-22：#30 顶栏「检查更新」按钮 + 弹窗（当前/最新/大小/说明）+ 带进度条下载 + sha256 校验 + 启动器 2 秒轮询 apply.json 完成替换重启；每次启动自动弹一次；build 生成 version.json 进 payload
 - 2026-10-22：#29 「只看我的」只显示自己负责的块（别人的岗位、里程碑都不再挂在卡上）；负责人向下填充默认关闭（秘术排期里 26 行负责人本来就是空的，填充把 21 行算成了本人），老存档一次性迁移

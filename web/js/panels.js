@@ -930,6 +930,11 @@ export function openSettings(tab = 'source') {
         <input class="input" data-k="manifest-url" value="${esc(state.settings.manifestUrl || '')}" placeholder="https://你的存储/latest.json" />
         <p class="hint">留空 = 不检查。填好后：托盘右键「检查更新…」手动查，或每小时自动查一次；发现新版本会弹窗确认，下载后校验 sha256 再替换重启。生成清单用 <code>build/make-manifest.ps1</code>。</p>
       </div>
+      <div class="field">
+        <label>只读 token <span class="opt">私有仓库 / 私有存储才需要，公开直链留空</span></label>
+        <input class="input" type="password" data-k="update-token" value="${esc(state.settings.updateToken || '')}" placeholder="ghp_… / github_pat_…" autocomplete="off" />
+        <p class="hint">只用于读 latest.json 和下载 exe。GitHub 建议用 Fine-grained token，仓库只勾这一个、权限只给 <b>Contents: Read</b>。</p>
+      </div>
       <div class="field" style="margin-top:20px">
         <label>数据</label>
         <div class="row">
@@ -1078,18 +1083,20 @@ export function openSettings(tab = 'source') {
       toast({ type: 'ok', title: '字段映射已更新', text: `当前共 ${state.records.length} 条任务` });
     }
     if (k === 'digest') { state.settings.dailyDigest = t.value; save(); }
-    if (k === 'manifest-url') {
-      state.settings.manifestUrl = t.value.trim();
+    if (k === 'manifest-url' || k === 'update-token') {
+      if (k === 'manifest-url') state.settings.manifestUrl = t.value.trim();
+      else state.settings.updateToken = t.value.trim();
       save();
-      // 启动器读的是 data/update.json，这里同步过去
+      // 启动器 / 服务端读的是 data/update.json，这里同步过去
       fetch('/api/update-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manifestUrl: state.settings.manifestUrl }),
+        body: JSON.stringify({ manifestUrl: state.settings.manifestUrl, token: state.settings.updateToken }),
       }).then((r) => r.json()).then((j) => {
-        toast(j.ok ? { type: 'ok', title: '更新地址已保存', text: j.config.manifestUrl || '（已清空，不再检查更新）' }
+        toast(j.ok ? { type: 'ok', title: '更新设置已保存', text: j.config.manifestUrl || '（已清空，不再检查更新）' }
           : { type: 'err', title: '保存失败', text: j.error || '' });
       }).catch(() => {});
+      return;
     }
     if (k === 'base-date') {
       state.schedule.baseDate = t.value;

@@ -44,7 +44,7 @@ async function pushUpdateConfig() {
     await fetch('/api/update-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ manifestUrl: state.settings.manifestUrl }),
+      body: JSON.stringify({ manifestUrl: state.settings.manifestUrl, token: state.settings.updateToken || '' }),
     });
   } catch { /* 离线就算了 */ }
 }

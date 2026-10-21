@@ -44,6 +44,7 @@ export const DEFAULT_SETTINGS = {
   syncOnSwitch: false,
   myColor: '#5B5BF0',
   manifestUrl: '',
+  updateToken: '',
 };
 
 export const DEFAULT_SCHEDULE = {
