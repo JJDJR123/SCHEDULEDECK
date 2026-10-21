@@ -3,7 +3,7 @@ import { state, loadState, applyImport, toggleDone, save } from './store.js';
 import { initUI, render } from './ui.js';
 import * as panels from './panels.js';
 import { start as startReminders, setNotifier, warmAudio, snooze } from './reminders.js';
-import { toast, setBusy, closeTop } from './kit.js';
+import { toast, setBusy, closeTop, layersSuppressed } from './kit.js';
 import { fmtDue } from './util.js';
 
 async function boot() {
@@ -157,6 +157,8 @@ function wireGlobal() {
       return;
     }
     if (e.key === 'Escape') {
+      // 刚关掉原生弹窗（取色器/选文件/下拉）时，这一下 Esc 不算「关抽屉」
+      if (layersSuppressed()) return;
       if (closeTop()) e.preventDefault();
     }
     if (mod && e.key.toLowerCase() === 'r' && e.shiftKey) {

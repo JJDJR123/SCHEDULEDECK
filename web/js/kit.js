@@ -64,6 +64,37 @@ export function closeAll() {
   while (stack.length) closeTop();
 }
 
+/**
+ * 原生弹窗（取色器、选文件、下拉）关掉的那一下，Windows 会把这次点击重新落到窗口上，
+ * 常常正好砸在遮罩上，于是「点一下调色盘整个抽屉就关了」。
+ * 这里在原生弹窗前后各屏蔽一小段时间，并且要求「按下」也发生在遮罩上才算点到外面。
+ */
+let suppressUntil = 0;
+function markNativeDialog() { suppressUntil = Date.now() + 900; }
+export function layersSuppressed() { return Date.now() < suppressUntil; }
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('blur', markNativeDialog);
+  window.addEventListener('focus', markNativeDialog);
+  document.addEventListener('pointerdown', (e) => {
+    const t = e.target;
+    if (t && t.tagName === 'INPUT' && (t.type === 'color' || t.type === 'file')) markNativeDialog();
+    if (t && t.tagName === 'SELECT') markNativeDialog();
+  }, true);
+}
+
+/** 只有「按下也在遮罩上」的一次点击才关窗口 */
+function bindBackdropClose(wrap) {
+  let downOnWrap = false;
+  wrap.addEventListener('pointerdown', (e) => { downOnWrap = e.target === wrap; });
+  wrap.addEventListener('click', (e) => {
+    const wasDown = downOnWrap;
+    downOnWrap = false;
+    if (e.target !== wrap || !wasDown || layersSuppressed()) return;
+    closeTop();
+  });
+}
+
 export function drawer({ title = '', subtitle = '', body = '', footer = '', wide = false, onMount, onClose }) {
   const wrap = document.createElement('div');
   wrap.className = 'drawer-backdrop';
@@ -80,7 +111,7 @@ export function drawer({ title = '', subtitle = '', body = '', footer = '', wide
       <div class="drawer-body">${body}</div>
       ${footer ? `<div class="drawer-foot">${footer}</div>` : ''}
     </aside>`;
-  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeTop(); });
+  bindBackdropClose(wrap);
   const closeWrap = () => {
     if (onClose) onClose();
     setTimeout(() => {
@@ -127,7 +158,7 @@ export function modal({ title = '', subtitle = '', body = '', footer = '', slim 
       <div class="modal-body">${body}</div>
       ${footer ? `<div class="modal-foot">${footer}</div>` : ''}
     </div>`;
-  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeTop(); });
+  bindBackdropClose(wrap);
   const handle = pushLayer(wrap, onClose);
   handle.el = wrap;
   handle.modal = wrap.querySelector('.modal');
