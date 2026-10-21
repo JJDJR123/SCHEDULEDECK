@@ -2,6 +2,7 @@
 import {
   state, save, toggleDone, setOverride, setMapping, applyImport, loadDemo,
   clearAll, exportJSON, autoMap, DEFAULT_RULES, rebuild, detectSchedule, canEdit,
+  setScheduleCol, setRoleOwnerCol, toggleRoleDateCol,
 } from './store.js';
 import {
   evalRules, resolveStyle, styleVars, FIELDS, PALETTE, newRule, sampleRecord,
@@ -544,7 +545,12 @@ export function openSettings(tab = 'source') {
 
   function scheduleTab() {
     const S = state.schedule;
+    const headers = state.table ? state.table.headers : [];
     const colName = (i) => (i >= 0 ? `第 ${i + 1} 列` : '—');
+    const colOptions = (cur, autoLabel = '自动 / 不用') => [
+      `<option value="-1" ${cur < 0 ? 'selected' : ''}>${autoLabel}</option>`,
+      ...headers.map((h, i) => `<option value="${i}" ${cur === i ? 'selected' : ''}>${i + 1}. ${esc(h || '未命名列')}</option>`),
+    ].join('');
     return `
       <div class="callout ok" style="margin-top:0">${icon('check-circle')}<div>已识别为「排期表」：一行一个内容，按 ${S.roles.length} 个角色分组，共 ${state.records.length} 条角色任务。</div></div>
       <div class="row">
@@ -556,22 +562,38 @@ export function openSettings(tab = 'source') {
         <div class="txt"><b>负责人向下填充</b><span>合并单元格只有左上角那格有值，打开后按上一行补全（不改表格）</span></div>
         ${switchHtml(state.settings.fillDown, 'data-k="fill-down"')}
       </div>
-      <div class="field">
-        <label>角色分组 <span class="opt">自动识别，可改名</span></label>
-        <div class="kv">
-          ${S.roles.map((r, i) => `
-            <div class="kv-row" style="align-items:center;gap:8px">
-              <span style="width:18px">${i + 1}</span>
-              <input class="input sm" data-k="role-name" data-i="${i}" value="${esc(r.name)}" style="max-width:120px" />
-              <b style="font-weight:450;color:var(--text-3);font-size:11.5px">负责人 ${colName(r.ownerCol)} · 日期 ${r.dateCols.map(colName).join(' / ')}</b>
-            </div>`).join('')}
+
+      <div class="field" style="margin-top:6px">
+        <label>内容 / 期数 / 上线日列 <span class="opt">自动识别不对时手动指</span></label>
+        <div class="row">
+          <div class="field"><label style="font-size:11px">内容列</label><select class="select" data-k="sched-col" data-key="titleCol" style="max-width:none;width:100%">${colOptions(S.titleCol)}</select></div>
+          <div class="field"><label style="font-size:11px">期数列</label><select class="select" data-k="sched-col" data-key="phaseCol" style="max-width:none;width:100%">${colOptions(S.phaseCol)}</select></div>
+          <div class="field"><label style="font-size:11px">上线日列</label><select class="select" data-k="sched-col" data-key="releaseCol" style="max-width:none;width:100%">${colOptions(S.releaseCol)}</select></div>
         </div>
       </div>
+
+      <div class="field">
+        <label>角色分组 <span class="opt">可改名、改负责人列、点日期列开关</span></label>
+        ${S.roles.map((r, i) => `
+          <div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px">
+            <div class="row" style="align-items:center;gap:6px">
+              <input class="input sm" data-k="role-name" data-i="${i}" value="${esc(r.name)}" style="max-width:110px" />
+              <select class="select" data-k="role-owner" data-key="${r.key}" style="max-width:none;flex:1;min-width:140px">
+                <option value="-1" ${r.ownerCol < 0 ? 'selected' : ''}>没有负责人列</option>
+                ${headers.map((h, ci) => `<option value="${ci}" ${r.ownerCol === ci ? 'selected' : ''}>${ci + 1}. ${esc(h || '未命名列')}</option>`).join('')}
+              </select>
+              <b style="font-weight:450;color:var(--text-3);font-size:11.5px;white-space:nowrap">${r.dateCols.length} 个日期列</b>
+            </div>
+            <div class="chips" style="margin-top:7px">
+              ${headers.map((h, ci) => `<button class="chip ${r.dateCols.includes(ci) ? 'active' : ''}" data-k="role-date" data-key="${r.key}" data-col="${ci}" title="第 ${ci + 1} 列">${esc(h || `列 ${ci + 1}`)}</button>`).join('')}
+            </div>
+          </div>`).join('')}
+      </div>
       <div class="row" style="margin-top:12px">
-        <button class="btn ghost" data-k="redetect" style="flex:none">重新识别</button>
+        <button class="btn ghost" data-k="redetect" style="flex:none">重新自动识别</button>
         <button class="btn ghost" data-k="schedule-off" style="flex:none">改用普通任务表</button>
       </div>
-      <p class="hint" style="margin-top:10px">角色名只是显示用；负责人、日期列都是按数据自动找的，换一张结构相同的表也能用。</p>`;
+      <p class="hint" style="margin-top:10px">改完立刻生效并存在本地；「重新自动识别」会覆盖手动改过的列。</p>`;
   }
 
   function notifyTab() {
@@ -692,6 +714,15 @@ export function openSettings(tab = 'source') {
     if (k === 'sound') { state.settings.sound = !state.settings.sound; save(); h.setBody(body()); return; }
     if (k === 'show-done') { state.settings.showDone = !state.settings.showDone; save(); refresh(); h.setBody(body()); return; }
     if (k === 'fill-down') { state.settings.fillDown = !state.settings.fillDown; rebuild(); save(); refresh(); h.setBody(body()); return; }
+    if (k === 'role-date') {
+      if (!toggleRoleDateCol(b.dataset.key, Number(b.dataset.col))) {
+        toast({ type: 'warn', title: '至少留一个日期列', text: '这个岗位至少要有一列日期，否则没有截止时间' });
+        return;
+      }
+      refresh();
+      h.setBody(body());
+      return;
+    }
     if (k === 'theme') { state.settings.theme = b.dataset.v; applyTheme(); save(); h.setBody(body()); refresh(); return; }
     if (k === 'density') {
       state.settings.density = state.settings.density === 'compact' ? 'cozy' : 'compact';
@@ -721,6 +752,15 @@ export function openSettings(tab = 'source') {
     if (k === 'my-name') {
       state.settings.myName = t.value.trim();
       save(); refresh(); h.setBody(body());
+    }
+    if (k === 'sched-col') {
+      setScheduleCol(t.dataset.key, Number(t.value));
+      refresh(); h.setBody(body());
+      toast({ type: 'ok', title: '列已更新', text: `当前共 ${state.records.length} 条角色任务` });
+    }
+    if (k === 'role-owner') {
+      setRoleOwnerCol(t.dataset.key, Number(t.value));
+      refresh(); h.setBody(body());
     }
     if (k === 'role-name') {
       const i = Number(t.dataset.i);

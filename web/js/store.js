@@ -840,6 +840,40 @@ export function setMapping(patch) {
   save();
 }
 
+/* ------------------------------------------------------------------ 手动选列 */
+
+/** 内容 / 期数 / 上线日：直接指到某一列（-1 = 不用） */
+export function setScheduleCol(key, col) {
+  if (!['phaseCol', 'titleCol', 'releaseCol'].includes(key)) return;
+  state.schedule[key] = Number(col);
+  rebuild();
+  save();
+}
+
+/** 某个岗位的负责人列（-1 = 没有负责人列，比如音效） */
+export function setRoleOwnerCol(roleKey, col) {
+  const role = (state.schedule.roles || []).find((r) => r.key === roleKey);
+  if (!role) return;
+  role.ownerCol = Number(col);
+  rebuild();
+  save();
+}
+
+/** 某个岗位用哪几列当日期（点一下就加/减）。最后一个日期列不让关，否则这个岗位就没东西可算了 */
+export function toggleRoleDateCol(roleKey, col) {
+  const role = (state.schedule.roles || []).find((r) => r.key === roleKey);
+  if (!role) return false;
+  const c = Number(col);
+  const has = role.dateCols.includes(c);
+  if (has && role.dateCols.length <= 1) return false;
+  role.dateCols = has
+    ? role.dateCols.filter((x) => x !== c)
+    : [...role.dateCols, c].sort((a, b) => a - b);
+  rebuild();
+  save();
+  return true;
+}
+
 export function setFilter(patch) {
   state.filters = { ...state.filters, ...patch };
   save();
