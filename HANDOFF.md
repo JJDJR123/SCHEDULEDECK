@@ -1,0 +1,95 @@
+# 交接文档 · 日程舱（ScheduleDeck）
+
+> 这份文档**持续更新**。规则见文末「文档迭代规则」。
+> 最后更新：2026-10-21 · 会话 #18
+
+## 1. 项目位置
+
+| 用途 | 路径 |
+| --- | --- |
+| 源码 / Git 仓库 | `A:\大肥鱼工作区\版本管理\日程舱` |
+| 远程 | https://github.com/JJDJR123/SCHEDULEDECK （**必须 Private**） |
+| 成品（单文件 exe） | `A:\大肥鱼工作区\打包成品\日程舱.exe` |
+| 旧工作副本 | `A:\大肥鱼工作区\schedule-deck`（以 Git 仓库为准，逐步废弃） |
+
+## 2. 常用命令
+
+```powershell
+cd A:\大肥鱼工作区\版本管理\日程舱
+node server.js --open                     # 开发运行 http://127.0.0.1:17890
+powershell -File build\build-single.ps1   # 打包单文件，输出到 ..\..\打包成品\日程舱.exe
+git add -A; git commit -m "..."; git push
+```
+
+打包前必须关闭正在运行的 `日程舱.exe`（build 脚本会检测占用并报错）。
+
+## 3. 架构
+
+- **server.js**：本地 HTTP（随机端口 + 固定 OAuth 回调端口 17899）、静态页、`/api/state`、`/api/import`、`/api/sync`、`/api/oauth/*`、`/api/shutdown`；单文件 exe 时内嵌 **Payload.zip**，启动自解压到 `%LOCALAPPDATA%\ScheduleDeck\app-<stamp>\`
+- **feishu.js**：tenant token、用户 OAuth（v3 优先、v2 回退）、wiki `get_node`、sheets v2 读值、bitable search、错误码中文化、表头识别（两行表头/无表头）
+- **web/js/store.js**：状态、数据导入、字段映射、**排期识别**、记录生成、持久化（localStorage + `/api/state`）
+- **web/js/ui.js**：侧栏、列表/表格/日历/规则视图、筛选
+- **web/js/panels.js**：任务详情、规则编辑器、设置、导入弹窗（扫码登录 / 应用凭证 / 粘贴 / 示例）
+- **launcher/Program.cs**：WinForms 托盘 + Chrome/Edge `--app` 窗口；有内嵌 payload 时自解压
+- **build/**：`make-icon.ps1`、`build.ps1`（文件夹版）、`build-single.ps1`（单文件版）
+
+## 4. 飞书接入
+
+- **扫码登录（推荐）**：`http://127.0.0.1:17899/callback` 已注册；scope：`offline_access`、`sheets:spreadsheet:readonly`、`wiki:wiki:readonly`、`bitable:app:readonly`
+- 用户身份：**杨浩源**（`data/oauth.json`，约 2 小时 access / 30 天 refresh，自动刷新）
+- 当前应用：App ID `cli_aa5276c66d78dc10`，Secret 已写入 `server.js` 的 `DEFAULT_APP_ID/SECRET`（**泄露风险：不要公开仓库/外发 exe**）
+- 源表：`总制作排期`（sheet `REDACTED_SHEET1`）与 `秘术排期`（`REDACTED_SHEET2`），同属 wiki 节点 `REDACTED_WIKI`
+
+## 5. 排期模式（当前核心）
+
+`detectSchedule()` 自动识别：内容列、期数列、上线日列，以及「负责人列 + 日期列」重复出现的角色组。
+
+总制作排期实测：48 行 × 3 角色 = 104 条角色任务
+
+| 角色 | 负责人 | 日期列 | 截止取 |
+| --- | --- | --- | --- |
+| 动作 | 动作负责人 | 动作开始 / 动作完成 | 动作完成 |
+| 特效 | 特效负责人 | 特效开始 / 特效完成 | 特效完成 |
+| 策划 | 策划负责人 | 配置完成 / 音效… / 收尾验收 | 收尾验收 |
+
+- 日期补年：`settings` 里的档期基准日（默认今天），`M月D日` 落在 [基准-30天, 基准+335天)，跨年自动切换，**不改表格**
+- 「只看我的」按 OAuth 姓名匹配负责人列（合并单元格只返回左上角，暂无向下填充）
+- 期数已从 tags 拆出为独立「档期」列表（侧栏），点击筛选
+- 表头识别优先含「负责人/开始/完成/时间/周期/验收」的行；第一行含 ≥2 日期视为无表头
+
+## 6. 数据与凭证
+
+| 文件 | 内容 |
+| --- | --- |
+| `data/state.json` | 表、映射、排期配置、完成状态、规则、设置 |
+| `data/config.json` | App ID/Secret、当前表 URL、mode（oauth/feishu） |
+| `data/oauth.json` | 用户 token（**敏感**） |
+
+单文件版优先把 `data` 放在 exe 同级，不可写则回落 `%LOCALAPPDATA%\ScheduleDeck\data`。
+
+## 7. 已知问题 / 待办
+
+- [ ] **多数据源**：改成 `state.sources[]`（表+映射+排期+缓存），侧栏多卡片切换；当前仍是单源「更换」
+- [ ] 合并单元格负责人向下填充
+- [ ] 手动选列（内容/期数/角色/日期），应对表格格式变化
+- [ ] 方案 B 自动更新：私有 GitHub 源码 + 私有对象存储 `latest.json`（version/url/sha256），每小时检查、校验后退出替换重启
+- [ ] 档期列表支持「全部/多选」与异常格式（S1、第一赛季）
+- [ ] 行数超 5000 截断、超大表分批读取
+
+## 8. 血泪教训
+
+1. **禁止用 Windows PowerShell 5.1 的 `Get-Content`/`Set-Content` 批量改源码**：UTF-8 无 BOM 会被按 GBK 读，中文变 `?` 且不可逆。只能用 `edit` 工具或 Node `fs.readFileSync(p,'utf8')`。
+2. 编辑 `build/*.ps1` 后需补 UTF-8 **BOM**，否则 Windows PowerShell 解析中文失败。
+3. 改 `web/js` 后必须重新打包，exe 内是快照；用户看到的永远是 exe 里的版本。
+
+## 9. 文档迭代规则
+
+- 本文超过 ~300 行，或话题发生代际变化（如更新器上线）时，新建 `HANDOFF-<序号>-<主题>.md`
+- 新文档开头保留：项目路径、当前版本、上一份文档链接、**未完成事项**
+- 旧文档不删除，只在其顶部标注「已被 XXX 取代」
+- 每次重要改动后追加到「变更记录」并 commit
+
+## 10. 变更记录
+
+- 2026-10-21：#18 修 phase 混入 tags；建立本交接文档；仓库首推
+- 2026-10-21：#17 单文件 exe、OAuth 扫码、内置凭证、表头识别修复、排期模式
