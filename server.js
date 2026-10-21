@@ -23,7 +23,8 @@ const OAUTH_PORT = Number(argOf('oauth-port', 17899)) || 17899;
 
 // 本人专用构建：没填凭证时自动用这一套（不要把带这个的 exe 发给别人）
 const DEFAULT_APP_ID = 'cli_aa5276c66d78dc10';
-const DEFAULT_APP_SECRET = 'REDACTED_SECRET';
+// App Secret 不再打包进 exe：每台机器在「设置 → 数据源 → 应用凭证」里填一次，存在本机 data/config.json
+const DEFAULT_APP_SECRET = '';
 
 let oauthPortReady = false;
 let pendingState = '';
@@ -118,14 +119,15 @@ function writeJson(file, obj) {
   fs.renameSync(tmp, file);
 }
 
-// 首次运行就把默认应用凭证写进本机配置，省得每次手填
+// 首次运行只预填 App ID（公开标识），App Secret 不进安装包，必须本机填一次
 function ensureDefaultApp() {
   const cfg = readJson(CONFIG_FILE, {});
   let changed = false;
   if (!cfg.appId) { cfg.appId = DEFAULT_APP_ID; changed = true; }
-  if (!cfg.appSecret) { cfg.appSecret = DEFAULT_APP_SECRET; changed = true; }
   if (changed) writeJson(CONFIG_FILE, cfg);
 }
+
+const NEED_SECRET = '这台机器还没保存 App Secret。打开「设置 → 数据源 → 应用凭证」填一次即可，它只存在本机 data/config.json，不会打包进 exe。';
 
 function readBody(req, limit = 8 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
@@ -280,6 +282,7 @@ async function ensureUserToken() {
   if (left > 5 * 60 * 1000) return o.access_token;
 
   if (!o.refresh_token) throw new Error('登录已过期，请重新扫码登录');
+  if (!cfg.appSecret) throw new Error(NEED_SECRET);
   const j = await feishu.refreshUserToken({
     appId: cfg.appId,
     appSecret: cfg.appSecret,

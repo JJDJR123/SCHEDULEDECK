@@ -101,6 +101,14 @@ git add -A; git commit -m "..."; git push
 - 老存档（只有单张 `table`）在 `loadState` 里会自动迁移成一条数据源。
 - `/api/sync` 由前端带上 `url`，同步的就是当前这条，不会同步成「上次导入的那张表」。
 
+### 分发与密钥（重要）
+
+- **exe 里不含 App Secret**。`DEFAULT_APP_SECRET` 是空串，每台机器在「设置 → 数据源 → 应用凭证」填一次，只写进本机 `data/config.json`。
+- 所以**发安装包 ≠ 发凭证**：拿到 exe 的人没有应用身份，只能用自己的飞书账号登录，看到的是**他自己有权限的表**。公司数据的安全性回到飞书文档权限上。
+- 更新包因此可以放任意直链（公开 CDN / OSS 都行），不需要 token；想限制"谁能下载 exe"再用私有源 + 只读 token。
+- ⚠️ **历史提交里仍有旧 secret**（从 `7f2992c` 起）。真要公开仓库之前必须：① 去飞书开放平台重置 App Secret；② 清历史（或换新仓库）。
+- 本机 `data/config.json`（含 Secret）和 `data/oauth.json`（用户 token）都在 .gitignore 里，没进过仓库。
+
 单文件版优先把 `data` 放在 exe 同级，不可写则回落 `%LOCALAPPDATA%\ScheduleDeck\data`。
 
 ## 8. 已知问题 / 待办
@@ -130,6 +138,7 @@ git add -A; git commit -m "..."; git push
 
 ## 11. 变更记录
 
+- 2026-10-22：#33 安全：App Secret 从 exe 里彻底移除（每台机器在 设置→数据源→应用凭证 填一次，存 data/config.json）；已验证 payload 里不再含密钥。分发 exe 不再等于分发凭证
 - 2026-10-22：#32 更新支持私有源：data/update.json 可配只读 token（Authorization: Bearer + Accept: application/octet-stream），设置 → 自动更新里填；GitHub 私有 release 也能拉
 - 2026-10-22：#31 顶栏「我有个想法🤓👆」：弹窗里填默认 JSON 模板，提交写到 data/suggestions/<名字>/<时间戳>.json；仓库新增 建议/ 文件夹（按人分目录）+ tools/collect-suggestions.ps1 收集
 - 2026-10-22：#30 顶栏「检查更新」按钮 + 弹窗（当前/最新/大小/说明）+ 带进度条下载 + sha256 校验 + 启动器 2 秒轮询 apply.json 完成替换重启；每次启动自动弹一次；build 生成 version.json 进 payload
