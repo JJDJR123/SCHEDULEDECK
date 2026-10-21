@@ -7,11 +7,16 @@ const os = require('os');
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const BASE = 'http://127.0.0.1:17890';
-const URL = process.argv[2] || 'https://REDACTED_TENANT.feishu.cn/wiki/REDACTED_WIKI?sheet=REDACTED_SHEET1';
+// 表链接从命令行传，别写进仓库：node tools/detect-test.js "https://xxx.feishu.cn/wiki/...?sheet=..."
+const URL = process.argv[2];
 const PORT = 9335;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
+  if (!URL) {
+    console.error('用法：node tools/detect-test.js "https://xxx.feishu.cn/wiki/...?sheet=xxxx"');
+    process.exit(1);
+  }
   const chrome = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${path.join(os.tmpdir(), 'sd-det-' + Date.now())}`,
