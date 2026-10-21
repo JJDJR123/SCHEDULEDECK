@@ -39,8 +39,8 @@ git add -A; git commit -m "..."; git push
 
 - **扫码登录（推荐）**：`http://127.0.0.1:17899/callback` 已注册；scope：`offline_access`、`sheets:spreadsheet:readonly`、`wiki:wiki:readonly`、`bitable:app:readonly`
 - 用户身份：**杨浩源**（`data/oauth.json`，约 2 小时 access / 30 天 refresh，自动刷新）
-- 当前应用：App ID / Secret 都在**本机** `data/config.json`，仓库和 exe 里都不含（2026-10-22 起）。新机器第一次在「设置 → 数据源 → 应用凭证」填一次
-- 源表：两张排期表（wiki 节点下的 sheet），具体 id 只记在本机，不写进仓库
+- 当前应用：**App ID `cli_aa5276c66d78dc10` 内置**（公开标识，不算密钥）；**App Secret 不进安装包**，每台机器在「设置 → 数据源 → 应用凭证」填一次，只写本机 `data/config.json`
+- 源表：两张排期表（wiki 节点下的 sheet），具体 id 只在本机，不写进仓库
 
 ## 5. 排期模式（当前核心）
 

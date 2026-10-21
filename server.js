@@ -21,10 +21,9 @@ const CONFIG_FILE = path.join(DATA, 'config.json');
 const OAUTH_FILE = path.join(DATA, 'oauth.json');
 const OAUTH_PORT = Number(argOf('oauth-port', 17899)) || 17899;
 
-// 本人专用构建：没填凭证时自动用这一套（不要把带这个的 exe 发给别人）
-// 不内置任何凭证：App ID / Secret 都由使用者在「设置 → 数据源 → 应用凭证」填，只存本机 data/config.json
-const DEFAULT_APP_ID = '';
-// App Secret 同理，永远不进安装包
+// App ID 不是密钥（相当于公开的 client_id），内置省得每台机器都填；
+// App Secret 才是凭证，永远不进安装包，由使用者在「设置 → 数据源 → 应用凭证」填，只存本机 data/config.json
+const DEFAULT_APP_ID = 'cli_aa5276c66d78dc10';
 const DEFAULT_APP_SECRET = '';
 
 let oauthPortReady = false;

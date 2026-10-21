@@ -133,6 +133,8 @@ export const state = {
   // 多数据源：sources[].{ id, meta, table, mapping, schedule }，上面的 table/source/mapping/schedule 是「当前那一条」的镜像
   sources: [],
   activeId: '',
+  // 飞书登录状态（不落盘，开机时从 /api/oauth/status 拉）
+  auth: { loggedIn: false, user: null, hasSecret: false },
 };
 
 function emptyMapping() {

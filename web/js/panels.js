@@ -218,10 +218,10 @@ export function openRow(rowIndex) {
 
 export function openCredentialGuide() {
   const m = modal({
-    title: '这台机器还没填应用凭证',
+    title: '这台机器还没填 App Secret',
     subtitle: '填一次就行，只存在本机，不会打包进安装包',
     body: `
-      <div class="callout warn">${icon('key')}<div>日程舱不内置任何密钥。要用飞书表格，需要填一次 App ID 和 App Secret——它们在飞书开放平台「凭证与基础信息」里。</div></div>
+      <div class="callout warn">${icon('key')}<div>App ID 已经内置好了，只差 <b>App Secret</b>——去飞书开放平台「凭证与基础信息」复制，粘一次就能用。</div></div>
       <p class="hint" style="margin:10px 0 0">填一次之后就一直能用；换电脑再填一次即可。用「粘贴导入」的话可以跳过。</p>`,
     footer: `
       <button class="btn ghost" data-k="cg-later">以后再说</button>
@@ -747,8 +747,13 @@ export function openSettings(tab = 'source') {
 
   function sourceTab() {
     const src = state.source;
+    const auth = state.auth || {};
+    const who = auth.user && auth.user.name ? auth.user.name : '';
     return `
       <div class="kv">
+        <div class="kv-row"><span>飞书登录</span><b>${auth.loggedIn
+          ? `<span style="color:var(--green)">已登录</span>${who ? ` · ${esc(who)}` : ''}`
+          : '<span style="color:var(--text-3)">未登录</span>'}</b></div>
         <div class="kv-row"><span>当前数据源</span><b>${src ? esc(src.title) : '未导入'}</b></div>
         <div class="kv-row"><span>类型</span><b>${src ? kindLabel(src.kind) : '—'}</b></div>
         <div class="kv-row"><span>上次同步</span><b>${src && src.lastSync ? esc(fmtShort(src.lastSync)) : '—'}</b></div>
@@ -757,6 +762,9 @@ export function openSettings(tab = 'source') {
       <div class="row" style="margin:14px 0">
         <button class="btn primary" data-k="sync" style="flex:none">${icon('refresh')}立即同步</button>
         <button class="btn ghost" data-k="import" style="flex:none">${icon('link')}更换数据源</button>
+        ${auth.loggedIn
+          ? `<button class="btn ghost" data-k="logout" style="flex:none">${icon('user')}退出登录</button>`
+          : `<button class="btn ghost" data-k="login" style="flex:none">${icon('user')}去登录</button>`}
       </div>
       ${src && src.kind === 'feishu' ? `<div class="callout ok">${icon('check-circle')}<div>已保存应用凭证，刷新时会用同一份凭证重新读取；App Secret 只存在本机。</div></div>` : ''}
       ${src && src.kind === 'demo' ? `<div class="callout warn">${icon('info')}<div>当前是示例数据，不能同步。导入飞书表格后即可实时刷新。</div></div>` : ''}
@@ -977,6 +985,25 @@ export function openSettings(tab = 'source') {
     if (k === 'tab') { tab = b.dataset.v; h.setBody(body()); return; }
     if (k === 'import') { window.__openImport && window.__openImport(); return; }
     if (k === 'sync') { window.__syncNow && window.__syncNow(); return; }
+    if (k === 'login') { h.close(); openImport('oauth'); return; }
+    if (k === 'logout') {
+      const yes = await confirmDialog({
+        title: '退出登录',
+        text: '退出后就不能从飞书同步了，下次同步前要重新扫码登录。本地的表数据、完成状态、规则都不会丢。',
+        confirmText: '退出登录',
+      });
+      if (!yes) return;
+      try {
+        await fetch('/api/oauth/logout', { method: 'POST' });
+        state.auth = { ...(state.auth || {}), loggedIn: false, user: null };
+        toast({ type: 'ok', title: '已退出登录', text: '下次同步前记得重新登录' });
+      } catch (err) {
+        toast({ type: 'err', title: '退出失败', text: err.message });
+      }
+      h.setBody(body());
+      refresh();
+      return;
+    }
     if (k === 'demo') {
       const ok = await confirmDialog({ title: '使用示例数据', text: '当前数据将被示例数据替换（本地已完成标记会保留）。', confirmText: '替换' });
       if (!ok) return;

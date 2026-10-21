@@ -64,6 +64,7 @@ async function pushUpdateConfig() {
 async function loadMyName() {
   try {
     const j = await (await fetch('/api/oauth/status', { cache: 'no-store' })).json();
+    state.auth = { loggedIn: !!(j && j.loggedIn), user: (j && j.user) || null, hasSecret: !!(j && j.hasSecret) };
     if (j && j.loggedIn && j.user && j.user.name && !state.settings.myName) {
       state.settings.myName = j.user.name;
       save();
