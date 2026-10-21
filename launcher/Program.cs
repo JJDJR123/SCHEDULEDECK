@@ -527,6 +527,15 @@ namespace ScheduleDeck
             sb.AppendLine("@echo off");
             sb.AppendLine("chcp 936 >nul");
             sb.AppendLine("echo [%date% %time%] 准备替换 >> \"" + log + "\"");
+            // 先把旧窗口关掉（新版启动时会自己开新窗口）
+            string pidFile = Path.Combine(_dataDir, "window.pid");
+            int winPid = 0;
+            try { if (File.Exists(pidFile)) int.TryParse(File.ReadAllText(pidFile).Trim(), out winPid); } catch { }
+            if (winPid > 0)
+            {
+                sb.AppendLine("echo [%date% %time%] 关闭旧窗口 " + winPid + " >> \"" + log + "\"");
+                sb.AppendLine("taskkill /f /t /pid " + winPid + " >nul 2>&1");
+            }
             sb.AppendLine(":wait");
             sb.AppendLine("tasklist /fi \"imagename eq " + name + "\" | find /i \"" + name + "\" >nul");
             sb.AppendLine("if not errorlevel 1 (ping 127.0.0.1 -n 2 >nul & goto wait)");
@@ -603,7 +612,17 @@ namespace ScheduleDeck
                     + " --no-first-run --no-default-browser-check --window-size=1440,940"
                     + " --disable-features=Translate,MediaRouter";
                 psi.UseShellExecute = false;
-                Process.Start(psi);
+                var proc = Process.Start(psi);
+                // 记住窗口进程，更新时要先把旧窗口关掉
+                try
+                {
+                    if (proc != null)
+                    {
+                        File.WriteAllText(Path.Combine(_dataDir, "window.pid"),
+                            proc.Id.ToString(), Encoding.UTF8);
+                    }
+                }
+                catch { /* 记不住就算了 */ }
             }
             catch (Exception ex)
             {

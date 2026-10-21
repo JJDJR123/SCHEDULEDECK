@@ -365,23 +365,23 @@ async function fetchCheck() {
   }
 }
 
-function bumpUpdateFailure(msg, manual) {
+function bumpUpdateFailure(msg, manual, kind = 'check') {
   const f = state.settings.updateFail || { count: 0 };
   f.count = (f.count || 0) + 1;
   f.last = String(msg || '').slice(0, 200);
   state.settings.updateFail = f;
   save();
 
-  if (manual) toast({ type: 'err', title: '检查更新失败', text: f.count >= 5 ? '连续失败 5 次' : `${msg}（第 ${f.count} 次）` });
+  if (manual) toast({ type: 'err', title: '更新失败', text: `${msg}（连续第 ${f.count} 次）` });
 
+  // 连续 5 次才问一次，而且要已登录
   if (f.count >= 5) {
     state.settings.updateFail = { count: 0 };
     save();
-    // 满 5 次才问一次，而且要登录
     askReportError(
-      'update-check: ' + String(msg || '').slice(0, 60),
+      'update-' + kind + ': ' + String(msg || '').slice(0, 60),
       f.last,
-      `检查更新已经连续失败 5 次了：${f.last}`,
+      `更新已经连续失败 5 次了：${f.last}`,
     );
   }
 }
@@ -463,7 +463,7 @@ async function startDownload(info) {
     installPrompt(info);
   } catch (e) {
     toast({ type: 'err', title: '下载更新失败', text: e.message, duration: 8000 });
-    askReportError('update-download: ' + String(e.message).slice(0, 60), e.message, '下载更新失败了：' + e.message);
+    bumpUpdateFailure(e.message, true, 'download');
   } finally {
     clearInterval(timer);
     if (tip && tip.parentNode) tip.remove();
@@ -500,7 +500,7 @@ function installPrompt(info) {
     } catch (err) {
       setBusy(b, false);
       toast({ type: 'err', title: '更新失败', text: err.message, duration: 8000 });
-      askReportError('update-apply: ' + String(err.message).slice(0, 60), err.message, '更新失败了：' + err.message);
+      bumpUpdateFailure(err.message, true, 'apply');
     }
   });
 }

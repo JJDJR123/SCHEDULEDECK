@@ -57,33 +57,44 @@ function authHeaders(cfg) {
   return h;
 }
 
+let downloading = false;
+
 async function downloadUpdate(url, headers) {
+  if (downloading) return null;         // 同时只允许一个下载，避免进度重复累计
+  downloading = true;
   updateState = { phase: 'downloading', received: 0, total: 0, error: '', file: '' };
+  let got = 0;                          // 本次下载自己的计数（不回读共享状态）
   const dir = path.join(DATA, 'update');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'new.exe');
   try { fs.unlinkSync(file); } catch { /* 没有就算了 */ }
 
-  const res = await fetch(url, {
-    headers: { ...(headers || { 'Cache-Control': 'no-cache' }), Accept: 'application/octet-stream' },
-  });
-  if (!res.ok) throw new Error('下载失败：HTTP ' + res.status);
-  updateState.total = Number(res.headers.get('content-length') || 0);
+  try {
+    const res = await fetch(url, {
+      headers: { ...(headers || { 'Cache-Control': 'no-cache' }), Accept: 'application/octet-stream' },
+    });
+    if (!res.ok) throw new Error('下载失败：HTTP ' + res.status);
+    updateState.total = Number(res.headers.get('content-length') || 0);
 
-  const out = fs.createWriteStream(file);
-  const reader = res.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();   // eslint-disable-line no-await-in-loop
-    if (done) break;
-    updateState.received += value.length;
-    if (!out.write(Buffer.from(value))) {
-      await new Promise((r) => out.once('drain', r));   // eslint-disable-line no-await-in-loop
+    const out = fs.createWriteStream(file);
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();   // eslint-disable-line no-await-in-loop
+      if (done) break;
+      got += value.length;
+      updateState.received = got;
+      if (!out.write(Buffer.from(value))) {
+        await new Promise((r) => out.once('drain', r));   // eslint-disable-line no-await-in-loop
+      }
     }
+    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+    if (!updateState.total) updateState.total = got;
+    updateState.phase = 'ready';
+    updateState.file = file;
+    return file;
+  } finally {
+    downloading = false;
   }
-  await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
-  updateState.phase = 'ready';
-  updateState.file = file;
-  return file;
 }
 
 
@@ -527,7 +538,7 @@ async function handler(req, res) {
       try { body = await readBody(req); } catch { body = {}; }
       const url = String((body && body.url) || '').trim();
       if (!/^https?:\/\//i.test(url)) return send(res, 200, { ok: false, error: '更新地址不合法' });
-      if (updateState.phase === 'downloading') return send(res, 200, { ok: true, started: false, progress: updateState });
+      if (downloading || updateState.phase === 'downloading') return send(res, 200, { ok: true, started: false, progress: updateState });
       const cfg = readJson(path.join(DATA, 'update.json'), {});
       // 立刻返回，下载在后台跑，进度用 /api/update/progress 轮询
       downloadUpdate(url, authHeaders(cfg)).catch((e) => {
