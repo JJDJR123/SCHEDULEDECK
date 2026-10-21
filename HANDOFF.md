@@ -39,8 +39,8 @@ git add -A; git commit -m "..."; git push
 
 - **扫码登录（推荐）**：`http://127.0.0.1:17899/callback` 已注册；scope：`offline_access`、`sheets:spreadsheet:readonly`、`wiki:wiki:readonly`、`bitable:app:readonly`
 - 用户身份：**杨浩源**（`data/oauth.json`，约 2 小时 access / 30 天 refresh，自动刷新）
-- 当前应用：App ID `cli_aa5276c66d78dc10`，Secret 已写入 `server.js` 的 `DEFAULT_APP_ID/SECRET`（**泄露风险：不要公开仓库/外发 exe**）
-- 源表：`总制作排期`（sheet `REDACTED_SHEET1`）与 `秘术排期`（`REDACTED_SHEET2`），同属 wiki 节点 `REDACTED_WIKI`
+- 当前应用：App ID / Secret 都在**本机** `data/config.json`，仓库和 exe 里都不含（2026-10-22 起）。新机器第一次在「设置 → 数据源 → 应用凭证」填一次
+- 源表：两张排期表（wiki 节点下的 sheet），具体 id 只记在本机，不写进仓库
 
 ## 5. 排期模式（当前核心）
 
@@ -138,6 +138,7 @@ git add -A; git commit -m "..."; git push
 
 ## 11. 变更记录
 
+- 2026-10-22：#34 提建议改成纯文本（去掉名字输入，自动取登录账号，存 .txt）；App ID 也不再硬编码（exe 里 App ID + Secret 双双清空，验证过）；首次启动检测到没有凭证会弹一次引导；HANDOFF 里的 App ID / wiki / sheet id 全部改成占位
 - 2026-10-22：#33 安全：App Secret 从 exe 里彻底移除（每台机器在 设置→数据源→应用凭证 填一次，存 data/config.json）；已验证 payload 里不再含密钥。分发 exe 不再等于分发凭证
 - 2026-10-22：#32 更新支持私有源：data/update.json 可配只读 token（Authorization: Bearer + Accept: application/octet-stream），设置 → 自动更新里填；GitHub 私有 release 也能拉
 - 2026-10-22：#31 顶栏「我有个想法🤓👆」：弹窗里填默认 JSON 模板，提交写到 data/suggestions/<名字>/<时间戳>.json；仓库新增 建议/ 文件夹（按人分目录）+ tools/collect-suggestions.ps1 收集

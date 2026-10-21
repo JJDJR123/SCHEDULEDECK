@@ -22,8 +22,9 @@ const OAUTH_FILE = path.join(DATA, 'oauth.json');
 const OAUTH_PORT = Number(argOf('oauth-port', 17899)) || 17899;
 
 // 本人专用构建：没填凭证时自动用这一套（不要把带这个的 exe 发给别人）
-const DEFAULT_APP_ID = 'cli_aa5276c66d78dc10';
-// App Secret 不再打包进 exe：每台机器在「设置 → 数据源 → 应用凭证」里填一次，存在本机 data/config.json
+// 不内置任何凭证：App ID / Secret 都由使用者在「设置 → 数据源 → 应用凭证」填，只存本机 data/config.json
+const DEFAULT_APP_ID = '';
+// App Secret 同理，永远不进安装包
 const DEFAULT_APP_SECRET = '';
 
 let oauthPortReady = false;
@@ -447,25 +448,28 @@ async function handler(req, res) {
     if (p === '/api/suggestion' && req.method === 'POST') {
       let body = {};
       try { body = await readBody(req); } catch { body = {}; }
-      const name = String((body && body.name) || '').trim();
-      if (!name) return send(res, 200, { ok: false, error: '缺少名字' });
-      const raw = body && body.suggestion;
-      const text = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
-      if (!text || text.length > 200 * 1024) return send(res, 200, { ok: false, error: '内容为空或太大' });
+      const name = String((body && body.name) || '').trim() || '匿名';
+      const text = String((body && body.text) || '').trim();
+      if (!text) return send(res, 200, { ok: false, error: '内容为空' });
+      if (text.length > 100 * 1024) return send(res, 200, { ok: false, error: '内容太长（上限 100KB）' });
 
       const safe = name.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40) || 'anonymous';
       const dir = path.join(DATA, 'suggestions', safe);
       fs.mkdirSync(dir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const file = path.join(dir, stamp + '.json');
-      const record = {
-        from: name,
-        at: new Date().toISOString(),
-        app: appVersion(),
-        suggestion: typeof raw === 'string' ? raw : raw,
-      };
-      fs.writeFileSync(file, JSON.stringify(record, null, 2), 'utf8');
-      return send(res, 200, { ok: true, path: `data/suggestions/${safe}/${stamp}.json`, file });
+      const file = path.join(dir, stamp + '.txt');
+      const when = new Date().toLocaleString('zh-CN', { hour12: false });
+      // 纯文本：头三行是元信息，--- 之后是正文
+      const content = [
+        '# 来自：' + name,
+        '# 时间：' + when,
+        '# 版本：' + (appVersion().version || 'dev'),
+        '---',
+        text,
+        '',
+      ].join('\r\n');
+      fs.writeFileSync(file, content, 'utf8');
+      return send(res, 200, { ok: true, path: `data/suggestions/${safe}/${stamp}.txt`, file });
     }
 
     if (p === '/api/update/check') {

@@ -213,19 +213,40 @@ export function openRow(rowIndex) {
 }
 
 /* ========================================================================== */
+/* 首次使用：凭证检测                                                          */
+/* ========================================================================== */
+
+export function openCredentialGuide() {
+  const m = modal({
+    title: '这台机器还没填应用凭证',
+    subtitle: '填一次就行，只存在本机，不会打包进安装包',
+    body: `
+      <div class="callout warn">${icon('key')}<div>日程舱不内置任何密钥。要用飞书表格，需要填一次 App ID 和 App Secret——它们在飞书开放平台「凭证与基础信息」里。</div></div>
+      <p class="hint" style="margin:10px 0 0">填一次之后就一直能用；换电脑再填一次即可。用「粘贴导入」的话可以跳过。</p>`,
+    footer: `
+      <button class="btn ghost" data-k="cg-later">以后再说</button>
+      <button class="btn primary" data-k="cg-go">${icon('key')}去填写</button>`,
+  });
+  m.el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-k]');
+    if (!b) return;
+    if (b.dataset.k === 'cg-later') m.close();
+    if (b.dataset.k === 'cg-go') { m.close(); openImport('feishu'); }
+  });
+  return m;
+}
+
+/* ========================================================================== */
 /* 提建议                                                                     */
 /* ========================================================================== */
 
-const IDEA_TEMPLATE = {
-  title: '',
-  type: '功能建议',
-  priority: '中',
-  content: '',
-  scene: '',
-};
+const IDEA_HINT = `想解决什么？（一句话）
+
+现在是怎么做的 / 卡在哪？
+
+希望变成什么样？`;
 
 export function openIdea() {
-  const me = String(state.settings.myName || '').trim();
   const m = modal({
     title: '我有个想法 🤓👆',
     subtitle: '写清楚想解决什么，比写「加个功能」有用得多',
@@ -235,17 +256,13 @@ export function openIdea() {
 
   const body = () => `
     <div class="field">
-      <label>你的名字 <span class="opt">用来分文件夹存档</span></label>
-      <input class="input" id="ideaName" value="${esc(me || '')}" placeholder="例如：杨浩源" />
-    </div>
-    <div class="field">
-      <label>建议内容 <span class="opt">默认是 JSON，也可以直接写一段话</span></label>
-      <textarea class="input" id="ideaText" spellcheck="false" style="height:220px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.6">${esc(JSON.stringify(IDEA_TEMPLATE, null, 2))}</textarea>
-      <p class="hint">title 一句话概括、type 功能建议/体验问题/bug、content 具体想要什么、scene 什么场景下想到的。</p>
+      <label>建议内容 <span class="opt">想到什么写什么，不用管格式</span></label>
+      <textarea class="input" id="ideaText" spellcheck="false" placeholder="${esc(IDEA_HINT)}" style="height:260px;font-size:13px;line-height:1.7"></textarea>
+      <p class="hint">提交时会记下当前登录的飞书账号名和版本号，方便我找到人问细节。</p>
     </div>`;
 
   const footer = () => `
-    <span class="hint" style="flex:1">存在本机 <code>data/suggestions/&lt;名字&gt;/</code>，可以随时用脚本收进仓库「建议」文件夹</span>
+    <span class="hint" style="flex:1">存在本机 <code>data/suggestions/&lt;账号&gt;/</code>，可以随时用脚本收进仓库「建议」文件夹</span>
     <button class="btn ghost" data-k="idea-cancel">取消</button>
     <button class="btn primary" data-k="idea-send">提交建议</button>`;
 
@@ -259,20 +276,24 @@ export function openIdea() {
     if (k === 'idea-cancel') { m.close(); return; }
     if (k !== 'idea-send') return;
 
-    const name = (m.el.querySelector('#ideaName').value || '').trim();
-    const raw = (m.el.querySelector('#ideaText').value || '').trim();
-    if (!name) { toast({ type: 'warn', title: '先写上名字' }); return; }
-    if (!raw) { toast({ type: 'warn', title: '还没写内容' }); return; }
+    const text = (m.el.querySelector('#ideaText').value || '').trim();
+    if (!text) { toast({ type: 'warn', title: '还没写内容' }); return; }
 
-    let payload = null;
-    try { payload = JSON.parse(raw); } catch { payload = { content: raw }; }
+    // 名字自动取登录账号，不用自己填
+    let name = String(state.settings.myName || '').trim();
+    if (!name) {
+      try {
+        const s = await (await fetch('/api/oauth/status', { cache: 'no-store' })).json();
+        if (s && s.loggedIn && s.user && s.user.name) name = s.user.name;
+      } catch { /* 离线 */ }
+    }
 
     setBusy(b, true, '提交中');
     try {
       const r = await (await fetch('/api/suggestion', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, suggestion: payload }),
+        body: JSON.stringify({ name: name || '匿名', text }),
       })).json();
       if (!r.ok) throw new Error(r.error || '提交失败');
       m.close();

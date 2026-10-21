@@ -32,7 +32,7 @@ Get-ChildItem $From -Directory | ForEach-Object {
   $person = $_.Name
   $dest = Join-Path $To $person
   New-Item -ItemType Directory -Force -Path $dest | Out-Null
-  Get-ChildItem $_.FullName -Filter *.json -File | ForEach-Object {
+  Get-ChildItem $_.FullName -File | Where-Object { $_.Extension -eq '.txt' -or $_.Extension -eq '.json' } | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $dest $_.Name) -Force
     $n++
   }

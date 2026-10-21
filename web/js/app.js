@@ -33,8 +33,20 @@ async function boot() {
   setTimeout(autoSync, 2600);
   loadMyName();
   pushUpdateConfig();
+  checkCredentials();
   // 每次打开都检查一次更新（没配更新地址就不打扰）
   setTimeout(() => { if (state.settings.manifestUrl) panels.openUpdate(); }, 3800);
+}
+
+/** 本机还没填应用凭证时，开机提醒一次（只提醒，不拦着用） */
+async function checkCredentials() {
+  try {
+    const s = await (await fetch('/api/oauth/status', { cache: 'no-store' })).json();
+    if (!s || s.hasSecret) return;
+    if (sessionStorage.getItem('sd.credential-prompted')) return;
+    sessionStorage.setItem('sd.credential-prompted', '1');
+    panels.openCredentialGuide();
+  } catch { /* 离线不管 */ }
 }
 
 /** 把「自动更新地址」同步给启动器（它读 data/update.json） */
