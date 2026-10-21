@@ -1,7 +1,7 @@
 # 交接文档 · 日程舱（ScheduleDeck）
 
 > 这份文档**持续更新**。规则见文末「文档迭代规则」。
-> 最后更新：2026-10-21 · 会话 #18
+> 最后更新：2026-10-21 · 会话 #19
 
 ## 1. 项目位置
 
@@ -17,11 +17,13 @@
 ```powershell
 cd A:\大肥鱼工作区\版本管理\日程舱
 node server.js --open                     # 开发运行 http://127.0.0.1:17890
-powershell -File build\build-single.ps1   # 打包单文件，输出到 ..\..\打包成品\日程舱.exe
+powershell -File build\build-single.ps1   # 打包单文件，自动定位「打包成品」目录
 git add -A; git commit -m "..."; git push
 ```
 
-打包前必须关闭正在运行的 `日程舱.exe`（build 脚本会检测占用并报错）。
+- **成品目录**：脚本从仓库往上逐级找现成的 `打包成品\`（当前 = `A:\大肥鱼工作区\打包成品`），找不到才回退到仓库上一级；也可 `-OutDir <路径>` 指定。
+- **中间产物** `dist\日程舱\` 现在在**仓库内**（已 gitignore），不再写到仓库外面。
+- 打包前必须关闭正在运行的 `日程舱.exe`（build 脚本会检测占用并报错）。注意启动器与 node 子进程互不联动：杀掉启动器后 node 会残留并继续服务旧快照（随机端口），要一并结束，否则会留下"幽灵服务"。
 
 ## 3. 架构
 
@@ -75,12 +77,17 @@ git add -A; git commit -m "..."; git push
 - [ ] 方案 B 自动更新：私有 GitHub 源码 + 私有对象存储 `latest.json`（version/url/sha256），每小时检查、校验后退出替换重启
 - [ ] 档期列表支持「全部/多选」与异常格式（S1、第一赛季）
 - [ ] 行数超 5000 截断、超大表分批读取
+- [ ] 启动器 / node 生命周期联动：node 意外退出时启动器没感知（不提示、不重启）；反向强杀启动器会留下孤儿 node
 
 ## 8. 血泪教训
 
 1. **禁止用 Windows PowerShell 5.1 的 `Get-Content`/`Set-Content` 批量改源码**：UTF-8 无 BOM 会被按 GBK 读，中文变 `?` 且不可逆。只能用 `edit` 工具或 Node `fs.readFileSync(p,'utf8')`。
 2. 编辑 `build/*.ps1` 后需补 UTF-8 **BOM**，否则 Windows PowerShell 解析中文失败。
 3. 改 `web/js` 后必须重新打包，exe 内是快照；用户看到的永远是 exe 里的版本。
+4. **`edit` 工具会丢掉 `build/*.ps1` 的 UTF-8 BOM**：改完立刻用 `.NET` 写回带 BOM 的 UTF-8（`New-Object System.Text.UTF8Encoding($true)`），否则中文解析失败（见第 2 条）。
+5. **打包脚本别按「仓库上一级」写死输出目录**：仓库从 `A:\大肥鱼工作区\schedule-deck` 搬到 `版本管理\日程舱` 后，exe 一度悄悄落到 `版本管理\打包成品`，用户点开的还是旧 exe。现在改成向上逐级找现成的 `打包成品`。
+6. **验 exe 内容不要只看时间戳**：用 `[Reflection.Assembly]::LoadFile($exe)` + `GetManifestResourceStream('Payload.zip')` 解出内嵌包，比对 `web/js/*.js`、`server.js` 的 SHA256，能一眼看出 exe 是不是旧快照。
+7. 关 / 开 exe 的姿势：进程名 `日程舱.exe`，node 子进程父进程是它、端口写在 `data\port.txt`；`POST /api/shutdown` 只关 node，启动器不会自己退。
 
 ## 9. 文档迭代规则
 
@@ -91,5 +98,6 @@ git add -A; git commit -m "..."; git push
 
 ## 10. 变更记录
 
+- 2026-10-21：#19 修正打包输出目录（此前 exe 落到 `版本管理\打包成品`，用户跑的是旧版）；`dist\` 移回仓库内；补 BOM；重打 exe 并启动验证（`/api/state` 200，快照哈希与源码一致）
 - 2026-10-21：#18 修 phase 混入 tags；建立本交接文档；仓库首推
 - 2026-10-21：#17 单文件 exe、OAuth 扫码、内置凭证、表头识别修复、排期模式

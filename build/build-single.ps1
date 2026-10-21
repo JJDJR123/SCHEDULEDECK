@@ -6,8 +6,17 @@
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
-$workspace = Split-Path -Parent $root
-if (-not $OutDir) { $OutDir = Join-Path $workspace '打包成品' }
+
+# 成品目录：从仓库往上找现成的「打包成品」文件夹，项目搬家后也不用改脚本
+if (-not $OutDir) {
+  $d = $root
+  for ($i = 0; $i -lt 4; $i++) {
+    $d = Split-Path -Parent $d
+    if (-not $d) { break }
+    if (Test-Path (Join-Path $d '打包成品')) { $OutDir = Join-Path $d '打包成品'; break }
+  }
+  if (-not $OutDir) { $OutDir = Join-Path (Split-Path -Parent $root) '打包成品' }
+}
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $exe = Join-Path $OutDir '日程舱.exe'
@@ -23,7 +32,7 @@ if (Test-Path $exe) {
 Write-Host '[1/5] 构建文件夹版'
 & (Join-Path $PSScriptRoot 'build.ps1') | Out-Host
 
-$dist = Join-Path $workspace 'dist\日程舱'
+$dist = Join-Path $root 'dist\日程舱'
 if (-not (Test-Path (Join-Path $dist 'server.js'))) { throw 'dist 不完整，构建失败' }
 
 Write-Host '[2/5] 生成 payload'

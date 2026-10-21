@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
 $launcherDir = Join-Path $root 'launcher'
-$distRoot = Join-Path (Split-Path -Parent $root) 'dist'
+$distRoot = Join-Path $root 'dist'   # 放在仓库内（已在 .gitignore），不再写到上一级
 $dist = Join-Path $distRoot '日程舱'
 
 Write-Host '[1/4] 生成图标'
