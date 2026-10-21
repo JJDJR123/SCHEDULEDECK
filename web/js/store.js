@@ -174,6 +174,25 @@ const MONTH_DAY = /^\d{1,2}\s*[月\-/.]\s*\d{1,2}\s*日?$/;
 export const isMonthDay = (v) => MONTH_DAY.test(String(v ?? '').trim());
 export const isDoneText = (v) => String(v ?? '').trim() === '完成';
 
+/** 识别算法版本：升级后老存档会按新规则重算角色（见 loadState） */
+export const DETECT_VERSION = 2;
+
+/**
+ * 角色名从「负责人」表头里取：策划负责人 → 策划、特效负责人 → 特效。
+ * 取不到（无名列、纯数字列）才退回「角色 N」，不再按出现顺序硬套动作/特效/策划。
+ */
+export function roleName(header, index) {
+  const raw = String(header ?? '').trim()
+    .replace(/[（(][^)）]*[)）]/g, '')
+    .replace(/(负责人|执行人|处理人|责任人|跟进人|owner|assignee|user)$/i, '')
+    .replace(/[\s:：]+$/, '')
+    .trim();
+  if (raw && raw.length <= 8 && !/^列\s*\d+$/.test(raw) && !/^(未命名|null|undefined|nan)$/i.test(raw)) {
+    return raw;
+  }
+  return `角色 ${index + 1}`;
+}
+
 /**
  * 识别「排期表」：一行一个内容，按角色分组重复出现「负责人 + 日期…」。
  * 不依赖表头，也不写死列号；识别不到就返回 null，走普通任务表。
@@ -205,7 +224,6 @@ export function detectSchedule(headers, rows) {
     && c.dates === 0 && c.done === 0
     && c.avgLen <= 8);
 
-  const roleNames = ['动作', '特效', '策划', '角色 4', '角色 5', '角色 6'];
   const roles = [];
   for (const c of nameCols) {
     const dateCols = [];
@@ -213,7 +231,7 @@ export function detectSchedule(headers, rows) {
     if (dateCols.length >= 1) {
       roles.push({
         key: 'r' + roles.length,
-        name: roleNames[roles.length] || `角色 ${roles.length + 1}`,
+        name: roleName(headers[c.i], roles.length),
         ownerCol: c.i,
         dateCols,
       });
@@ -230,6 +248,7 @@ export function detectSchedule(headers, rows) {
 
   return {
     enabled: true,
+    v: DETECT_VERSION,
     baseDate: fmtDate(Date.now(), 'YYYY-MM-DD'),
     phaseCol,
     titleCol,
@@ -666,7 +685,18 @@ export async function loadState() {
   state.filters = { ...state.filters, ...(best.filters || {}) };
   state.ui = { ...state.ui, ...(best.ui || {}) };
   state.reminders = { fired: {}, ...(best.reminders || {}) };
+
+  // 识别规则升级过：老存档按新规则重算角色（保留档期基准日）。
+  // 必须等下面所有字段都恢复完再存，否则会把空的 overrides 写回磁盘。
+  const staleSchedule = state.schedule.enabled && state.table
+    && (state.schedule.v || 1) < DETECT_VERSION;
+  if (staleSchedule) {
+    const re = detectSchedule(state.table.headers, state.table.rows);
+    if (re) state.schedule = { ...re, baseDate: state.schedule.baseDate || re.baseDate };
+  }
+
   rebuild();
+  if (staleSchedule) save();
   return { firstRun: false };
 }
 
