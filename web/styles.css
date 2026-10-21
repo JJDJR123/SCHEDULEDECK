@@ -567,6 +567,10 @@ a:hover { text-decoration: underline; }
 .release-chip { color: var(--text-3); }
 
 [data-theme="dark"] .track { background: var(--panel-3); }
+[data-theme="dark"] .track.mine {
+  background: color-mix(in srgb, var(--my-color, var(--accent)) 26%, var(--panel-3));
+  border-color: color-mix(in srgb, var(--my-color, var(--accent)) 60%, var(--line));
+}
 [data-theme="dark"] .track.ownerless, [data-theme="dark"] .track.milestone { background: transparent; }
 .icon-btn {
   width: 28px; height: 28px; border: 0; border-radius: 7px;

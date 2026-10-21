@@ -286,7 +286,7 @@ export function openRuleEditor(ruleId) {
     const st = resolveStyle(draft, sample, Date.now());
     const badge = st.badge || '';
     return `
-      <div class="preview-card" style="${styleVars(st)}">
+      <div class="preview-card" id="rulePreview" style="${styleVars(st)}">
         <div class="pt">
           <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${draft.style.strike ? 'text-decoration:line-through;' : ''}">${esc(sample.title)}</span>
           ${badge ? `<span class="badge" style="flex:none;--r-badge-bg:${st.badgeBg};--r-badge-fg:${st.badgeFg}">${esc(badge)}</span>` : ''}
@@ -295,8 +295,31 @@ export function openRuleEditor(ruleId) {
       </div>`;
   }
 
+  /**
+   * 取色器拖动的每一帧都会触发 input，这里只换预览，绝不重建 input 本身
+   * （重建会把还开着的原生取色器一起卸载，表现就是「点一下就没了」）。
+   */
+  function refreshPreview(field) {
+    const box = h.el.querySelector('#rulePreview');
+    if (box) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = preview();
+      const next = tmp.firstElementChild;
+      if (next) box.replaceWith(next);
+    }
+    if (field) {
+      const row = h.el.querySelector('.swatches[data-field="' + field + '"]');
+      if (row) {
+        const cur = String(draft.style[field] || '').toLowerCase();
+        row.querySelectorAll('.swatch[data-v]').forEach((el) => {
+          el.classList.toggle('active', String(el.dataset.v).toLowerCase() === cur);
+        });
+      }
+    }
+  }
+
   function swatches(key, value, colors) {
-    return `<div class="swatches">
+    return `<div class="swatches" data-field="${key}">
       ${colors.map((c) => `<button class="swatch ${String(value).toLowerCase() === c.toLowerCase() ? 'active' : ''}" data-k="color" data-field="${key}" data-v="${c}" style="background:${c}" title="${c}"></button>`).join('')}
       <label class="swatch custom" title="自定义颜色"><input type="color" data-k="color-input" data-field="${key}" value="${/^#[0-9a-f]{6}$/i.test(value) ? value : '#F04438'}" /></label>
     </div>`;
@@ -362,7 +385,7 @@ export function openRuleEditor(ruleId) {
     }
     if (t.dataset.k === 'color-input') {
       draft.style[t.dataset.field] = t.value;
-      redrawAll();
+      refreshPreview(t.dataset.field);
     }
   });
 
@@ -645,9 +668,28 @@ export function openSettings(tab = 'source') {
       </div>`;
   }
 
+  /** 只更新预览胶囊 / 色值 / 按钮，不重建 input（重建会关掉正开着的取色器） */
+  function refreshMyColorUI() {
+    const c = myDraft || state.settings.myColor || '#5B5BF0';
+    const prev = h.el.querySelector('#myColorPreview');
+    if (prev) prev.style.setProperty('--my-color', c);
+    const hex = h.el.querySelector('#myColorHex');
+    if (hex) hex.textContent = c;
+    const acts = h.el.querySelector('#myColorActions');
+    const dirty = !!myDraft && myDraft !== state.settings.myColor;
+    if (acts) {
+      acts.innerHTML = dirty
+        ? '<button class="btn sm ghost" data-k="my-color-reset">还原</button> '
+          + '<button class="btn sm primary" data-k="my-color-apply">✓ 应用这个颜色</button>'
+        : '<span class="hint" style="margin:0">当前生效中</span>';
+    }
+    h.el.querySelectorAll('#myColorChips .chip[data-v]').forEach((el) => {
+      el.classList.toggle('active', String(el.dataset.v).toLowerCase() === c.toLowerCase());
+    });
+  }
+
   function lookTab() {
-    const myColor = myDraft || state.settings.myColor || '#5B5BF0';
-    return `
+    const myColor = myDraft || state.settings.myColor || '#5B5BF0';    return `
       <div class="field">
         <label>主题</label>
         <div class="seg">
@@ -662,18 +704,18 @@ export function openSettings(tab = 'source') {
       <div class="field">
         <label>我的颜色 <span class="opt">自己负责的那块卡片用这个色，选好先预览再应用</span></label>
         <div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">
-          <span class="track mine" style="--my-color:${esc(myColor)};cursor:default;flex:none" title="预览：列表里就是长这样">
+          <span class="track mine" id="myColorPreview" style="--my-color:${esc(myColor)};cursor:default;flex:none" title="预览：列表里就是长这样">
             <span class="track-role">策划</span><span class="track-owner">杨浩源</span><span class="track-dates">11/21</span><span class="track-check">${icon('check')}</span>
           </span>
           <label class="swatch custom" title="打开调色盘" style="width:26px;height:26px;flex:none"><input type="color" data-k="my-color-input" value="${esc(myColor)}" /></label>
-          <code class="hint" style="margin:0">${esc(myColor)}</code>
+          <code class="hint" id="myColorHex" style="margin:0">${esc(myColor)}</code>
           <span class="spacer"></span>
-          ${myDraft && myDraft !== state.settings.myColor
+          <span id="myColorActions">${myDraft && myDraft !== state.settings.myColor
             ? `<button class="btn sm ghost" data-k="my-color-reset">还原</button>
                <button class="btn sm primary" data-k="my-color-apply">${icon('check')}应用这个颜色</button>`
-            : `<span class="hint" style="margin:0">当前生效中</span>`}
+            : '<span class="hint" style="margin:0">当前生效中</span>'}</span>
         </div>
-        <div class="chips" style="margin-top:9px">
+        <div class="chips" id="myColorChips" style="margin-top:9px">
           ${MY_COLORS.map((c) => `<button class="chip ${myColor.toLowerCase() === c.toLowerCase() ? 'active' : ''}" data-k="my-color" data-v="${c}" title="${c}"><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${c};margin-right:5px"></span>${c}</button>`).join('')}
         </div>
         <p class="hint">点色块或者调色盘只是「试色」，上面的小胶囊就是列表里的真实样子；满意了再点「应用这个颜色」。</p>
@@ -781,7 +823,7 @@ export function openSettings(tab = 'source') {
     if (k === 'my-color') {
       // 只是试色：换草稿 + 刷新预览，不落盘
       myDraft = b.dataset.v;
-      h.setBody(body());
+      refreshMyColorUI();
       return;
     }
     if (k === 'my-color-apply') {
@@ -807,13 +849,22 @@ export function openSettings(tab = 'source') {
     }
   });
 
+  h.el.addEventListener('input', (e) => {
+    const t = e.target;
+    // 取色器拖动时实时预览（只换色，不重建 DOM）
+    if (t.dataset && t.dataset.k === 'my-color-input') {
+      myDraft = t.value;
+      refreshMyColorUI();
+    }
+  });
+
   h.el.addEventListener('change', (e) => {
     const t = e.target;
     const k = t.dataset.k;
     if (k === 'my-color-input') {
-      // 调色盘只是试色，点「应用这个颜色」才生效
+      // 调色盘只是试色：只刷新预览，不重建 input（否则拖一下就没了）
       myDraft = t.value;
-      h.setBody(body());
+      refreshMyColorUI();
       return;
     }
     if (k === 'map') {
