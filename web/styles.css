@@ -72,8 +72,45 @@
   --shadow-lg: 0 30px 70px -24px rgba(0, 0, 0, .75), 0 6px 16px rgba(0, 0, 0, .4);
 }
 
-html, body {
-  margin: 0;
+/* 蓝色大肥鱼：深海蓝调，主色取 logo 的蓝 */
+[data-theme="blue"] {
+  color-scheme: dark;
+  --bg: #071426;
+  --panel: #0C2039;
+  --panel-2: #102845;
+  --panel-3: #173356;
+  --line: #17324F;
+  --line-strong: #255079;
+  --text: #E6F1FF;
+  --text-2: #A6C1DE;
+  --text-3: #6B8AAC;
+  --accent: #4C9BFF;
+  --accent-strong: #79B8FF;
+  --accent-soft: #0F3358;
+  --accent-softer: #0B2645;
+  --red: #FF9B8A;
+  --red-bg: #3A1B17;
+  --amber: #FFC46B;
+  --amber-bg: #3A2A12;
+  --green: #6FE3B0;
+  --green-bg: #0F3026;
+  --blue: #8FC2FF;
+  --blue-bg: #12314F;
+  --gray-bg: #132B45;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-md: 0 12px 30px -12px rgba(1, 10, 24, .7), 0 2px 6px rgba(0, 0, 0, .35);
+  --shadow-lg: 0 30px 70px -24px rgba(1, 10, 24, .8), 0 6px 16px rgba(0, 0, 0, .45);
+}
+
+/* 深海底色：一点点光晕，别太花 */
+[data-theme="blue"] body {
+  background:
+    radial-gradient(1200px 600px at 12% -10%, rgba(76, 155, 255, .12), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(32, 90, 160, .18), transparent 55%),
+    var(--bg);
+}
+
+html, body {  margin: 0;
   height: 100%;
   overflow: hidden;
 }

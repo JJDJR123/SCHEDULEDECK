@@ -1,3 +1,39 @@
+function mirrorCandidates(url) {
+  if (!/^https:\/\/github\.com\//i.test(url)) return [{ url, direct: true }];
+  let order;
+  if (lastGoodMirror) {
+    // 上次通的线路优先，直连放最后（国内经常连不上，别挡在前面）
+    order = [lastGoodMirror, ...MIRRORS.filter((m) => m && m !== lastGoodMirror), ''];
+  } else {
+    order = ['', ...MIRRORS.filter((m) => m)];
+  }
+  return [...new Set(order)].map((m) => ({ url: m + url, direct: !m }));
+}
+
+async function fetchManifest(url, cfg) {
+  // 所有线路同时抢，谁先回来用谁——不用一个个等超时
+  const cands = mirrorCandidates(url);
+  const master = new AbortController();
+  const attempts = cands.map(async (c) => {
+    const hdr = c.direct ? authHeaders(cfg) : { 'Cache-Control': 'no-cache' };
+    const sig = AbortSignal.any ? AbortSignal.any([master.signal, AbortSignal.timeout(9000)]) : AbortSignal.timeout(9000);
+    const r = await fetch(c.url, { headers: hdr, signal: sig });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (!j || !j.stamp) throw new Error('返回不是 latest.json');
+    return { j, c };
+  });
+  try {
+    const first = await Promise.any(attempts);
+    master.abort();
+    lastGoodMirror = MIRRORS.find((m) => m && first.c.url.startsWith(m)) || '';
+    rememberMirror(cfg, lastGoodMirror);
+    return first.j;
+  } catch {
+    throw new Error('所有线路都不通');
+  }
+}
+
 'use strict';
 /* 日程舱 — 本地服务（静态页面 + 飞书代理 + 本地存档） */
 
@@ -80,60 +116,102 @@ function mirrorCandidates(url) {
   return [...new Set(order.filter((m) => m !== undefined))].map((m) => ({ url: m + url, direct: !m }));
 }
 
-async function fetchManifest(url, cfg) {
-  let lastErr = null;
-  for (const target of mirrorCandidates(url)) {
-    try {
-      // 镜像不传凭证，只有直连 github 才带 token
-      const r = await fetch(target.url, { headers: target.direct ? authHeaders(cfg) : { 'Cache-Control': 'no-cache' }, signal: AbortSignal.timeout(target.direct ? 8000 : 20000) });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const j = await r.json();
-      if (!j || !j.stamp) throw new Error('返回不是 latest.json');
-      lastGoodMirror = MIRRORS.find((m) => m && target.url.startsWith(m)) || '';
-      rememberMirror(cfg, lastGoodMirror);
-      return j;
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr || new Error('所有线路都不通');
-}
+
 
 async function downloadFromOne(url, headers, expect) {
-  const res = await fetch(url, {
-    headers: { ...(headers || { 'Cache-Control': 'no-cache' }), Accept: 'application/octet-stream' },
-    signal: AbortSignal.timeout(10 * 60 * 1000),
-  });
-  if (!res.ok) throw new Error('下载失败：HTTP ' + res.status);
+  const file = path.join(DATA, 'update', 'new.exe');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
 
-  const dir = path.join(DATA, 'update');
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, 'new.exe');
-  try { fs.unlinkSync(file); } catch { /* 没有就算了 */ }
+  // 已经下了一部分就接着下（换线路不用从头再来）
+  let startAt = 0;
+  try {
+    const st = fs.statSync(file);
+    if (st.size > 0 && (!expect.size || st.size < expect.size)) startAt = st.size;
+  } catch { /* 还没文件 */ }
 
-  const total = Number(res.headers.get('content-length') || 0);
-  if (!expect.total) updateState.total = total;
+  const ac = new AbortController();
+  let lastAt = Date.now();
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastAt > 20000) ac.abort(new Error('这条线路卡住了，换一条'));
+  }, 2000);
 
-  const out = fs.createWriteStream(file);
-  const reader = res.body.getReader();
-  let got = 0;
-  for (;;) {
-    const { done, value } = await reader.read();   // eslint-disable-line no-await-in-loop
-    if (done) break;
-    got += value.length;
-    updateState.received = got;
-    if (!out.write(Buffer.from(value))) {
-      await new Promise((r) => out.once('drain', r));   // eslint-disable-line no-await-in-loop
-    }
+  let res;
+  try {
+    const hdr = { ...(headers || { 'Cache-Control': 'no-cache' }), Accept: 'application/octet-stream' };
+    if (startAt > 0) hdr.Range = 'bytes=' + startAt + '-';
+    const sig = AbortSignal.any ? AbortSignal.any([ac.signal, AbortSignal.timeout(10 * 60 * 1000)]) : AbortSignal.timeout(10 * 60 * 1000);
+    res = await fetch(url, { headers: hdr, signal: sig });
+  } catch (e) {
+    clearInterval(watchdog);
+    throw e;
   }
-  await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+  if (!res.ok && res.status !== 206) {
+    clearInterval(watchdog);
+    throw new Error('下载失败：HTTP ' + res.status);
+  }
 
-  if (expect.size && got !== expect.size) throw new Error(`大小不对（${got} ≠ ${expect.size}）`);
+  // 服务器不认 Range 就只能从头来
+  const append = startAt > 0 && res.status === 206;
+  if (!append) { startAt = 0; try { fs.unlinkSync(file); } catch { /* ignore */ } }
+
+  const total = Number(res.headers.get('content-length') || 0) + startAt;
+  if (!expect.total && total) updateState.total = total;
+
+  const out = fs.createWriteStream(file, { flags: append ? 'a' : 'w' });
+  const reader = res.body.getReader();
+  let got = startAt;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();   // eslint-disable-line no-await-in-loop
+      if (done) break;
+      got += value.length;
+      lastAt = Date.now();
+      updateState.received = got;
+      if (!out.write(Buffer.from(value))) {
+        await new Promise((r) => out.once('drain', r));   // eslint-disable-line no-await-in-loop
+      }
+    }
+    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+  } finally {
+    clearInterval(watchdog);
+  }
+
+  if (expect.size && got !== expect.size) throw new Error('大小不对（' + got + ' ≠ ' + expect.size + '）');
   if (expect.sha256) {
     const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
     if (actual !== String(expect.sha256).toLowerCase()) throw new Error('校验不通过（内容被改过）');
   }
   return file;
+}
+
+/** 每条线路先下 5 秒，按实际速度排序（只看首字节会被"先快后限速"骗） */
+async function rankBySpeed(url, headers) {
+  const cands = mirrorCandidates(url);
+  const scored = await Promise.all(cands.map(async (c) => {
+    if (cands.length === 1) return { ...c, bps: 1e9 };
+    const ac = new AbortController();
+    const t0 = Date.now();
+    let bytes = 0;
+    try {
+      const hdr = c.direct ? headers : { 'Cache-Control': 'no-cache' };
+      const sig = AbortSignal.any ? AbortSignal.any([ac.signal, AbortSignal.timeout(6000)]) : AbortSignal.timeout(6000);
+      const r = await fetch(c.url, { headers: hdr, signal: sig });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const reader = r.body.getReader();
+      const stopAt = t0 + 5000;
+      while (Date.now() < stopAt) {
+        const { done, value } = await reader.read();   // eslint-disable-line no-await-in-loop
+        if (done) break;
+        bytes += value.length;
+      }
+      ac.abort();
+      return { ...c, bps: (bytes * 1000) / Math.max(1, Date.now() - t0) };
+    } catch {
+      ac.abort();
+      return { ...c, bps: bytes > 0 ? (bytes * 1000) / Math.max(1, Date.now() - t0) : 0 };
+    }
+  }));
+  return scored.sort((a, b) => b.bps - a.bps);
 }
 
 async function downloadUpdate(url, headers, expect = {}) {
@@ -142,7 +220,9 @@ async function downloadUpdate(url, headers, expect = {}) {
   updateState = { phase: 'downloading', received: 0, total: expect.size || 0, error: '', file: '', via: '' };
   try {
     let lastErr = null;
-    for (const target of mirrorCandidates(url)) {
+    const ranked = await rankBySpeed(url, headers);
+    updateState.via = ranked.length ? (MIRRORS.find((m) => m && ranked[0].url.startsWith(m)) || '直连') : '';
+    for (const target of ranked) {
       try {
         updateState.received = 0;
         updateState.via = MIRRORS.find((m) => m && target.url.startsWith(m)) || '直连';
@@ -154,7 +234,6 @@ async function downloadUpdate(url, headers, expect = {}) {
         return file;
       } catch (e) {
         lastErr = e;
-        try { fs.unlinkSync(path.join(DATA, 'update', 'new.exe')); } catch { /* ignore */ }
       }
     }
     throw lastErr || new Error('所有线路都下载失败');

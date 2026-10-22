@@ -1011,8 +1011,9 @@ export function openSettings(tab = 'source') {
       <div class="field">
         <label>主题</label>
         <div class="seg">
-          <button class="${state.settings.theme !== 'dark' ? 'active' : ''}" data-k="theme" data-v="light">${icon('sun', 'sm')}浅色</button>
+          <button class="${state.settings.theme === 'light' || !state.settings.theme ? 'active' : ''}" data-k="theme" data-v="light">${icon('sun', 'sm')}浅色</button>
           <button class="${state.settings.theme === 'dark' ? 'active' : ''}" data-k="theme" data-v="dark">${icon('moon', 'sm')}深色</button>
+          <button class="${state.settings.theme === 'blue' ? 'active' : ''}" data-k="theme" data-v="blue">${icon('droplet', 'sm')}蓝色大肥鱼</button>
         </div>
       </div>
       <div class="field">
@@ -1266,9 +1267,11 @@ function kindLabel(kind) {
 }
 
 export function applyTheme() {
-  const theme = state.settings.theme === 'dark' ? 'dark' : 'light';
+  const raw = state.settings.theme;
+  const theme = raw === 'dark' || raw === 'blue' ? raw : 'light';
   document.documentElement.dataset.theme = theme;
-  pushWindowTheme(theme);
+  // 蓝色大肥鱼也是深底，标题栏跟着走深色
+  pushWindowTheme(theme === 'light' ? 'light' : 'dark');
 }
 
 /** 把主题告诉启动器，让它把 Windows 标题栏也染成同一个颜色 */
