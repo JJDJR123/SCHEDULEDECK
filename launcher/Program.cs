@@ -56,7 +56,7 @@ namespace ScheduleDeck
                     Prepare();
                     StartServer();
                     SetupTray();
-                    if (!_noWindow) OpenWindow();
+                    if (!_noWindow) { OpenWindow(); StartWindowThemeWatcher(); }
                     Application.ApplicationExit += delegate { StopServer(); };
                     Application.Run();
                 }
@@ -653,6 +653,117 @@ namespace ScheduleDeck
         private static extern bool SetForegroundWindow(IntPtr hWnd);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hWnd, int attr, ref int value, int size);
+
+        // 标题栏跟应用同色（Win10 只有深色模式，Win11 还能自定义颜色和圆角）
+        private static int _appliedTheme = -1;
+        private static IntPtr _appliedHwnd = IntPtr.Zero;
+        private static System.Windows.Forms.Timer _themeTimer;
+
+        private static void StartWindowThemeWatcher()
+        {
+            _themeTimer = new System.Windows.Forms.Timer();
+            _themeTimer.Interval = 1500;
+            _themeTimer.Tick += delegate { SyncWindowTheme(); };
+            _themeTimer.Start();
+        }
+
+        private static string ReadTheme()
+        {
+            try
+            {
+                string f = Path.Combine(_dataDir, "window-theme.json");
+                if (!File.Exists(f)) return "light";
+                string t = File.ReadAllText(f, Encoding.UTF8);
+                return t.Contains("\"dark\"") ? "dark" : "light";
+            }
+            catch { return "light"; }
+        }
+
+        private static void LogWin(string msg)
+        {
+            try
+            {
+                File.AppendAllText(Path.Combine(_dataDir, "window.log"),
+                    "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] " + msg + "\r\n", Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        private static void SyncWindowTheme()
+        {
+            try
+            {
+                string theme = ReadTheme();
+                int want = theme == "dark" ? 1 : 0;
+                IntPtr h = FindAppWindow();
+                if (h == IntPtr.Zero) return;
+                // 窗口句柄变了（Chrome 有时会重建窗口）或者主题变了，都重新染一次
+                if (_appliedTheme == want && _appliedHwnd == h) return;
+
+                int r20 = DwmSetWindowAttribute(h, 20, ref want, sizeof(int));   // 深色标题栏（Win10 1903+）
+                int r19 = DwmSetWindowAttribute(h, 19, ref want, sizeof(int));   // 老版本号，失败无所谓
+                int corner = 2;                                                  // Win11：圆角
+                int r33 = DwmSetWindowAttribute(h, 33, ref corner, sizeof(int));
+                int caption = want == 1 ? 0x00150F0D : 0x00F9F5F3;               // #0D0F15 / #F3F5F9（BGR）
+                int r35 = DwmSetWindowAttribute(h, 35, ref caption, sizeof(int)); // Win11：标题栏颜色
+                int captionText = want == 1 ? 0x00F4ECE9 : 0x00221915;           // #E9ECF4 / #151922
+                int r36 = DwmSetWindowAttribute(h, 36, ref captionText, sizeof(int));
+                LogWin("theme=" + theme + " hwnd=" + h + " r20=" + r20 + " r19=" + r19 + " r33=" + r33 + " r35=" + r35 + " r36=" + r36);
+                _appliedTheme = want;
+                _appliedHwnd = h;
+            }
+            catch (Exception ex) { LogWin("err " + ex.Message); }
+        }
+
+        /// <summary>找应用窗口：优先按记录的 pid，找不到就按窗口标题（Chrome 会换进程）</summary>
+        private static IntPtr FindAppWindow()
+        {
+            uint target = 0;
+            try
+            {
+                string f = Path.Combine(_dataDir, "window.pid");
+                if (File.Exists(f)) uint.TryParse(File.ReadAllText(f).Trim(), out target);
+            }
+            catch { /* 没有就算了 */ }
+
+            IntPtr byPid = IntPtr.Zero;
+            IntPtr byTitle = IntPtr.Zero;
+            EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
+            {
+                if (!IsWindowVisible(hWnd)) return true;
+                var sb = new StringBuilder(512);
+                GetWindowText(hWnd, sb, sb.Capacity);
+                if (sb.Length == 0) return true;
+                string title = sb.ToString();
+                if (title.IndexOf("日程舱", StringComparison.Ordinal) < 0) return true;
+
+                uint pid;
+                GetWindowThreadProcessId(hWnd, out pid);
+                if (target != 0 && pid == target) { byPid = hWnd; return false; }
+                if (byTitle == IntPtr.Zero) byTitle = hWnd;
+                return true;
+            }, IntPtr.Zero);
+
+            IntPtr h = byPid != IntPtr.Zero ? byPid : byTitle;
+            // 记下真正的窗口进程，更新时才能把它关掉
+            try
+            {
+                if (h != IntPtr.Zero)
+                {
+                    uint pid;
+                    GetWindowThreadProcessId(h, out pid);
+                    string f = Path.Combine(_dataDir, "window.pid");
+                    string now = File.Exists(f) ? File.ReadAllText(f).Trim() : "";
+                    if (pid != 0 && now != pid.ToString()) File.WriteAllText(f, pid.ToString(), Encoding.UTF8);
+                }
+            }
+            catch { /* 记不上不影响 */ }
+            return h;
+        }
 
         /// <summary>找已经打开的「日程舱」应用窗口（Chromium --app），有就还原并置前</summary>
         private static bool FocusExistingWindow()

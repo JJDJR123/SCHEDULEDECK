@@ -1268,6 +1268,18 @@ function kindLabel(kind) {
 export function applyTheme() {
   const theme = state.settings.theme === 'dark' ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme;
+  pushWindowTheme(theme);
+}
+
+/** 把主题告诉启动器，让它把 Windows 标题栏也染成同一个颜色 */
+function pushWindowTheme(theme) {
+  try {
+    fetch('/api/window-theme', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme }),
+    }).catch(() => {});
+  } catch { /* 忽略 */ }
 }
 
 export function applyDensity() {

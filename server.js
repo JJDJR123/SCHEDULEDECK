@@ -521,6 +521,14 @@ async function handler(req, res) {
       }
     }
 
+    if (p === '/api/window-theme' && req.method === 'POST') {
+      // 启动器读这个文件，把 Windows 标题栏染成跟应用一样的颜色
+      let body = {};
+      try { body = await readBody(req); } catch { body = {}; }
+      const theme = body && body.theme === 'dark' ? 'dark' : 'light';
+      writeJson(path.join(DATA, 'window-theme.json'), { theme, at: Date.now() });
+      return send(res, 200, { ok: true, theme });
+    }
     if (p === '/api/report-error' && req.method === 'POST') {
       // 同一个账号 + 同一个错误签名 → 一个文件：最多留 5 条样本，其余只累计次数
       let body = {};
