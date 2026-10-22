@@ -828,7 +828,7 @@ export function openSettings(tab = 'source') {
       </div>
       <div class="row" style="margin:14px 0">
         <button class="btn primary" data-k="sync" style="flex:none">${icon('refresh')}立即同步</button>
-        <button class="btn ghost" data-k="import" style="flex:none">${icon('link')}更换数据源</button>
+        <button class="btn ghost" data-k="import" style="flex:none">${icon('plus')}添加数据源</button>
         ${auth.loggedIn
           ? `<button class="btn ghost" data-k="logout" style="flex:none">${icon('user')}退出登录</button>`
           : `<button class="btn ghost" data-k="login" style="flex:none">${icon('user')}去登录</button>`}
@@ -1323,12 +1323,13 @@ const FEISHU_STEPS = `
 export function openImport(tab = 'oauth', opts = {}) {
   // 允许 openImport({ asNew: true }) 这种写法
   if (tab && typeof tab === 'object') { opts = tab; tab = opts.tab || 'oauth'; }
-  const asNew = !!opts.asNew;
+  // 默认「加入新表」；只有明确要替换某一条时才传 asNew: false
+  const asNew = opts.asNew !== false;
   let pollTimer = 0;
   // 新开一条数据源还是替换当前这条
   const push = (data) => applyImport(data, { asNew });
   const m = modal({
-    title: asNew ? '新增数据源' : '导入飞书表格',
+    title: asNew ? '添加数据源' : '更换这条数据源',
     subtitle: asNew ? '再挂一张表，侧栏可以随时切换' : '用飞书账号扫码登录，或直接粘贴表格内容',
     body: '',
     footer: '',

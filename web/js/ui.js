@@ -749,7 +749,7 @@ export function initUI() {
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const act = b.dataset.act;
-    if (act === 'import') { panels.openImport(); return; }
+    if (act === 'import') { panels.openImport({ asNew: false }); return; }
     if (act === 'login') { panels.openImport('oauth'); return; }
     if (act === 'import-new') { panels.openImport({ asNew: true }); return; }
     if (act === 'sync') { window.__syncNow && window.__syncNow(); return; }
@@ -794,7 +794,7 @@ export function initUI() {
   document.getElementById('btnIdea').addEventListener('click', () => panels.openIdea());
   document.getElementById('btnBell').addEventListener('click', () => panels.openReminders());
   document.getElementById('btnSettings').addEventListener('click', () => panels.openSettings());
-  document.getElementById('btnImport').addEventListener('click', () => panels.openImport());
+  document.getElementById('btnImport').addEventListener('click', () => panels.openImport({ asNew: true }));
 
   const search = document.getElementById('searchInput');
   let timer = 0;
@@ -863,7 +863,7 @@ function onViewClick(e) {
       render({ keepScroll: true });
       break;
     }
-    case 'import': panels.openImport(); break;
+    case 'import': panels.openImport({ asNew: false }); break;
     case 'login': panels.openImport('oauth'); break;
     case 'import-new': panels.openImport({ asNew: true }); break;
     case 'source-switch': {
