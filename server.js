@@ -35,7 +35,7 @@ fs.mkdirSync(DATA, { recursive: true });
 
 /* ------------------------------------------------------------------ 自动更新 */
 
-let updateState = { phase: 'idle', received: 0, total: 0, error: '', file: '' };
+let updateState = { phase: 'idle', received: 0, total: 0, error: '', file: '', via: '' };
 
 function appVersion() {
   try {
@@ -61,39 +61,93 @@ function authHeaders(cfg) {
 
 let downloading = false;
 
-async function downloadUpdate(url, headers) {
-  if (downloading) return null;         // 同时只允许一个下载，避免进度重复累计
-  downloading = true;
-  updateState = { phase: 'downloading', received: 0, total: 0, error: '', file: '' };
-  let got = 0;                          // 本次下载自己的计数（不回读共享状态）
+// 国内直连 github 经常超时：按顺序换线路，哪条通用哪条
+// 都是公开的 github 加速镜像，只拼接 download 地址，不经过任何第三方账号
+const MIRRORS = ['', 'https://ghfast.top/', 'https://gh-proxy.com/', 'https://ghproxy.net/'];
+let lastGoodMirror = '';   // 上次成功的线路（'' = 直连）
+
+function mirrorCandidates(url) {
+  if (!/^https:\/\/github\.com\//i.test(url)) return [{ url, direct: true }];
+  const order = [lastGoodMirror, ...MIRRORS.filter((m) => m !== lastGoodMirror)];
+  return [...new Set(order.filter((m) => m !== undefined))].map((m) => ({ url: m + url, direct: !m }));
+}
+
+async function fetchManifest(url, cfg) {
+  let lastErr = null;
+  for (const target of mirrorCandidates(url)) {
+    try {
+      // 镜像不传凭证，只有直连 github 才带 token
+      const r = await fetch(target.url, { headers: target.direct ? authHeaders(cfg) : { 'Cache-Control': 'no-cache' }, signal: AbortSignal.timeout(20000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      if (!j || !j.stamp) throw new Error('返回不是 latest.json');
+      lastGoodMirror = MIRRORS.find((m) => m && target.url.startsWith(m)) || '';
+      return j;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('所有线路都不通');
+}
+
+async function downloadFromOne(url, headers, expect) {
+  const res = await fetch(url, {
+    headers: { ...(headers || { 'Cache-Control': 'no-cache' }), Accept: 'application/octet-stream' },
+    signal: AbortSignal.timeout(10 * 60 * 1000),
+  });
+  if (!res.ok) throw new Error('下载失败：HTTP ' + res.status);
+
   const dir = path.join(DATA, 'update');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'new.exe');
   try { fs.unlinkSync(file); } catch { /* 没有就算了 */ }
 
-  try {
-    const res = await fetch(url, {
-      headers: { ...(headers || { 'Cache-Control': 'no-cache' }), Accept: 'application/octet-stream' },
-    });
-    if (!res.ok) throw new Error('下载失败：HTTP ' + res.status);
-    updateState.total = Number(res.headers.get('content-length') || 0);
+  const total = Number(res.headers.get('content-length') || 0);
+  if (!expect.total) updateState.total = total;
 
-    const out = fs.createWriteStream(file);
-    const reader = res.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();   // eslint-disable-line no-await-in-loop
-      if (done) break;
-      got += value.length;
-      updateState.received = got;
-      if (!out.write(Buffer.from(value))) {
-        await new Promise((r) => out.once('drain', r));   // eslint-disable-line no-await-in-loop
+  const out = fs.createWriteStream(file);
+  const reader = res.body.getReader();
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();   // eslint-disable-line no-await-in-loop
+    if (done) break;
+    got += value.length;
+    updateState.received = got;
+    if (!out.write(Buffer.from(value))) {
+      await new Promise((r) => out.once('drain', r));   // eslint-disable-line no-await-in-loop
+    }
+  }
+  await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+
+  if (expect.size && got !== expect.size) throw new Error(`大小不对（${got} ≠ ${expect.size}）`);
+  if (expect.sha256) {
+    const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    if (actual !== String(expect.sha256).toLowerCase()) throw new Error('校验不通过（内容被改过）');
+  }
+  return file;
+}
+
+async function downloadUpdate(url, headers, expect = {}) {
+  if (downloading) return null;         // 同时只允许一个下载，避免进度重复累计
+  downloading = true;
+  updateState = { phase: 'downloading', received: 0, total: expect.size || 0, error: '', file: '', via: '' };
+  try {
+    let lastErr = null;
+    for (const target of mirrorCandidates(url)) {
+      try {
+        updateState.received = 0;
+        updateState.via = MIRRORS.find((m) => m && target.url.startsWith(m)) || '直连';
+        const file = await downloadFromOne(target.url, target.direct ? headers : { 'Cache-Control': 'no-cache' }, expect);
+        lastGoodMirror = MIRRORS.find((m) => m && target.url.startsWith(m)) || '';
+        updateState.phase = 'ready';
+        updateState.file = file;
+        return file;
+      } catch (e) {
+        lastErr = e;
+        try { fs.unlinkSync(path.join(DATA, 'update', 'new.exe')); } catch { /* ignore */ }
       }
     }
-    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
-    if (!updateState.total) updateState.total = got;
-    updateState.phase = 'ready';
-    updateState.file = file;
-    return file;
+    throw lastErr || new Error('所有线路都下载失败');
   } finally {
     downloading = false;
   }
@@ -520,14 +574,13 @@ async function handler(req, res) {
       try {
         // 清单地址可能被 CDN 缓存，加个时间戳绕过去
         const bust = manifestUrl + (manifestUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
-        const r = await fetch(bust, { headers: authHeaders(cfg) });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const latest = await r.json();
+        const latest = await fetchManifest(bust, cfg);
         if (!latest || !latest.stamp || !latest.url) throw new Error('latest.json 缺字段');
         return send(res, 200, {
           ok: true,
           current: cur,
           latest,
+          via: lastGoodMirror || '直连',
           hasUpdate: String(latest.stamp) > String(cur.stamp || '0'),
         });
       } catch (e) {
@@ -543,7 +596,10 @@ async function handler(req, res) {
       if (downloading || updateState.phase === 'downloading') return send(res, 200, { ok: true, started: false, progress: updateState });
       const cfg = readJson(path.join(DATA, 'update.json'), {});
       // 立刻返回，下载在后台跑，进度用 /api/update/progress 轮询
-      downloadUpdate(url, authHeaders(cfg)).catch((e) => {
+      downloadUpdate(url, authHeaders(cfg), {
+        sha256: String((body && body.sha256) || '').trim(),
+        size: Number((body && body.size) || 0) || 0,
+      }).catch((e) => {
         updateState.phase = 'error';
         updateState.error = e.message || String(e);
       });

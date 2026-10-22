@@ -433,7 +433,7 @@ async function startDownload(info) {
     const r = await (await fetch('/api/update/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: info.latest.url }),
+      body: JSON.stringify({ url: info.latest.url, sha256: info.latest.sha256, size: Number(info.latest.size) || 0 }),
     })).json();
     if (!r.ok) throw new Error(r.error || '下载失败');
 
@@ -445,7 +445,7 @@ async function startDownload(info) {
           const t = p.progress.total || Number(info.latest.size) || 0;
           const pct = t ? Math.min(100, Math.round((g / t) * 100)) : 0;
           const el = tip && tip.querySelector('.t-text');
-          if (el) el.textContent = `正在后台下载更新… ${pct}%`;
+          if (el) el.textContent = `正在后台下载更新… ${pct}%${p.progress.via ? '（' + p.progress.via + '）' : ''}`;
         }
       } catch { /* 忽略 */ }
     }, 500);
