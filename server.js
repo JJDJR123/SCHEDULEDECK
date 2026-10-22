@@ -66,6 +66,14 @@ let downloading = false;
 const MIRRORS = ['', 'https://ghfast.top/', 'https://gh-proxy.com/', 'https://ghproxy.net/'];
 let lastGoodMirror = '';   // 上次成功的线路（'' = 直连）
 
+function rememberMirror(cfg, mirror) {
+  try {
+    const f = path.join(DATA, 'update.json');
+    const cur = readJson(f, {});
+    if ((cur.mirror || '') !== mirror) writeJson(f, { ...cur, mirror });
+  } catch { /* 记不住没关系 */ }
+}
+
 function mirrorCandidates(url) {
   if (!/^https:\/\/github\.com\//i.test(url)) return [{ url, direct: true }];
   const order = [lastGoodMirror, ...MIRRORS.filter((m) => m !== lastGoodMirror)];
@@ -77,11 +85,12 @@ async function fetchManifest(url, cfg) {
   for (const target of mirrorCandidates(url)) {
     try {
       // 镜像不传凭证，只有直连 github 才带 token
-      const r = await fetch(target.url, { headers: target.direct ? authHeaders(cfg) : { 'Cache-Control': 'no-cache' }, signal: AbortSignal.timeout(20000) });
+      const r = await fetch(target.url, { headers: target.direct ? authHeaders(cfg) : { 'Cache-Control': 'no-cache' }, signal: AbortSignal.timeout(target.direct ? 8000 : 20000) });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       if (!j || !j.stamp) throw new Error('返回不是 latest.json');
       lastGoodMirror = MIRRORS.find((m) => m && target.url.startsWith(m)) || '';
+      rememberMirror(cfg, lastGoodMirror);
       return j;
     } catch (e) {
       lastErr = e;
@@ -139,6 +148,7 @@ async function downloadUpdate(url, headers, expect = {}) {
         updateState.via = MIRRORS.find((m) => m && target.url.startsWith(m)) || '直连';
         const file = await downloadFromOne(target.url, target.direct ? headers : { 'Cache-Control': 'no-cache' }, expect);
         lastGoodMirror = MIRRORS.find((m) => m && target.url.startsWith(m)) || '';
+        rememberMirror(cfg, lastGoodMirror);
         updateState.phase = 'ready';
         updateState.file = file;
         return file;
@@ -568,6 +578,7 @@ async function handler(req, res) {
       const cfg = readJson(path.join(DATA, 'update.json'), {});
       const manifestUrl = String(cfg.manifestUrl || DEFAULT_MANIFEST_URL).trim();
       const cur = appVersion();
+      if (!lastGoodMirror && cfg.mirror) lastGoodMirror = cfg.mirror;   // 上次通的线路优先
       if (!manifestUrl) {
         return send(res, 200, { ok: false, error: '还没有配置更新地址', current: cur });
       }
@@ -595,6 +606,7 @@ async function handler(req, res) {
       if (!/^https?:\/\//i.test(url)) return send(res, 200, { ok: false, error: '更新地址不合法' });
       if (downloading || updateState.phase === 'downloading') return send(res, 200, { ok: true, started: false, progress: updateState });
       const cfg = readJson(path.join(DATA, 'update.json'), {});
+      if (!lastGoodMirror && cfg.mirror) lastGoodMirror = cfg.mirror;
       // 立刻返回，下载在后台跑，进度用 /api/update/progress 轮询
       downloadUpdate(url, authHeaders(cfg), {
         sha256: String((body && body.sha256) || '').trim(),

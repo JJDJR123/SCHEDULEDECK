@@ -386,14 +386,30 @@ function bumpUpdateFailure(msg, manual, kind = 'check') {
   }
 }
 
+/** 改一条常驻提示的文字（用起来比重建 toast 稳） */
+function setToastText(tip, title, text) {
+  if (!tip) return;
+  const t = tip.querySelector('.t-title');
+  if (t && title) t.textContent = title;
+  const x = tip.querySelector('.t-text');
+  if (x && text != null) x.textContent = text;
+}
+
 /** 后台检查更新：不弹窗；有更新就在右下角提示 */
 export async function checkUpdate({ manual = false } = {}) {
+  // 手动点「检查更新」立刻给反馈，网慢也不像卡死
+  const tip = manual ? toast({ type: 'info', title: '正在连接 Git 仓库…', text: '检查有没有新版本', duration: 0 }) : null;
+  // 5 秒还没回，说明在换线路，换个说法免得像卡死
+  const slow = setTimeout(() => setToastText(tip, '正在连接 Git 仓库…', '网络有点慢，正在试加速线路'), 5000);
   let r = await fetchCheck();
   if (!r || !r.ok) {
     // 失败先自己再来一次
+    if (tip) setToastText(tip, '正在重试…', '网络不太好，再试一次');
     await new Promise((res) => setTimeout(res, 2500));
     r = await fetchCheck();
   }
+  clearTimeout(slow);
+  if (tip) tip.remove();
   if (!r || !r.ok) {
     bumpUpdateFailure((r && r.error) || '未知错误', manual);
     return null;
@@ -426,7 +442,7 @@ function showUpdateToast(info) {
 
 /** 选择更新之后：后台下载，下好再弹窗 */
 async function startDownload(info) {
-  const tip = toast({ type: 'info', title: '正在后台下载更新…', text: '下载完会弹窗让你确认', duration: 0 });
+  const tip = toast({ type: 'info', title: '正在连接 Git 仓库…', text: '正在获取下载地址', duration: 0 });
   let timer = 0;
   try {
     // 服务端立刻返回，进度靠轮询
@@ -436,6 +452,7 @@ async function startDownload(info) {
       body: JSON.stringify({ url: info.latest.url, sha256: info.latest.sha256, size: Number(info.latest.size) || 0 }),
     })).json();
     if (!r.ok) throw new Error(r.error || '下载失败');
+    setToastText(tip, '正在后台下载更新…', '0%');
 
     timer = setInterval(async () => {
       try {
