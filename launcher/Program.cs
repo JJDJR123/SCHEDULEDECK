@@ -355,20 +355,25 @@ namespace ScheduleDeck
             }
         }
 
+        // 更新清单地址写死（公开仓库，不是密钥）；update.json 里填了就优先用它
+        private const string DefaultManifestUrl =
+            "https://github.com/JJDJR123/SCHEDULEDECK/releases/download/latest/latest.json";
+
         private static string ReadManifestUrl()
         {
             try
             {
                 string file = Path.Combine(_dataDir, "update.json");
-                if (!File.Exists(file)) return "";
+                if (!File.Exists(file)) return DefaultManifestUrl;
                 string text = File.ReadAllText(file, Encoding.UTF8);
                 var m = System.Text.RegularExpressions.Regex.Match(text, "\"manifestUrl\"\\s*:\\s*\"([^\"]*)\"");
-                if (!m.Success) return "";
-                return m.Groups[1].Value.Replace("\\/", "/").Trim();
+                if (!m.Success) return DefaultManifestUrl;
+                string url = m.Groups[1].Value.Replace("\\/", "/").Trim();
+                return url.Length > 0 ? url : DefaultManifestUrl;
             }
             catch
             {
-                return "";
+                return DefaultManifestUrl;
             }
         }
 
@@ -390,7 +395,10 @@ namespace ScheduleDeck
 
         private static void StartUpdateTimer()
         {
+            // 检查更新现在由网页端在后台做（右下角提示，不弹窗），启动器只负责执行替换。
+            // 只有带 --auto-update 参数（无人值守安装）时才由启动器自己检查。
             if (!_packaged) return;
+            if (!_autoInstall) return;
             if (!ReadAutoUpdate()) return;
             if (ReadManifestUrl().Length == 0) return;
 

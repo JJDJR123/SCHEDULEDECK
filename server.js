@@ -25,6 +25,8 @@ const OAUTH_PORT = Number(argOf('oauth-port', 17899)) || 17899;
 // App Secret 才是凭证，永远不进安装包，由使用者在「设置 → 数据源 → 应用凭证」填，只存本机 data/config.json
 const DEFAULT_APP_ID = 'cli_aa5276c66d78dc10';
 const DEFAULT_APP_SECRET = '';
+// 自动更新清单地址（公开仓库的固定地址，不是密钥），写死省得每台机器填
+const DEFAULT_MANIFEST_URL = 'https://github.com/JJDJR123/SCHEDULEDECK/releases/download/latest/latest.json';
 
 let oauthPortReady = false;
 let pendingState = '';
@@ -510,7 +512,7 @@ async function handler(req, res) {
 
     if (p === '/api/update/check') {
       const cfg = readJson(path.join(DATA, 'update.json'), {});
-      const manifestUrl = String(cfg.manifestUrl || '').trim();
+      const manifestUrl = String(cfg.manifestUrl || DEFAULT_MANIFEST_URL).trim();
       const cur = appVersion();
       if (!manifestUrl) {
         return send(res, 200, { ok: false, error: '还没有配置更新地址', current: cur });
@@ -593,7 +595,7 @@ async function handler(req, res) {
       const cur = readJson(UPDATE_FILE, {});
       const next = {
         ...cur,
-        manifestUrl: String(body.manifestUrl != null ? body.manifestUrl : cur.manifestUrl || '').trim(),
+        manifestUrl: String(body.manifestUrl != null ? body.manifestUrl : cur.manifestUrl || DEFAULT_MANIFEST_URL).trim(),
         auto: body.auto != null ? !!body.auto : cur.auto !== false,
         updatedAt: Date.now(),
       };

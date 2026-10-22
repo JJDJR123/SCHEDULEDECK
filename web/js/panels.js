@@ -1022,9 +1022,9 @@ export function openSettings(tab = 'source') {
         <p class="hint">点色块或者调色盘只是「试色」，上面的小胶囊就是列表里的真实样子；满意了再点「应用这个颜色」。</p>
       </div>
       <div class="field" style="margin-top:20px">
-        <label>自动更新 <span class="opt">latest.json 的网址</span></label>
-        <input class="input" data-k="manifest-url" value="${esc(state.settings.manifestUrl || '')}" placeholder="https://你的存储/latest.json" />
-        <p class="hint">留空 = 不检查。填好后：托盘右键「检查更新…」手动查，或每小时自动查一次；发现新版本会弹窗确认，下载后校验 sha256 再替换重启。生成清单用 <code>build/make-manifest.ps1</code>。</p>
+        <label>自动更新 <span class="opt">已内置，一般不用动</span></label>
+        <input class="input" data-k="manifest-url" value="${esc(state.settings.manifestUrl || '')}" placeholder="内置地址" />
+        <p class="hint">地址写死在程序里（GitHub Release 的 <code>latest.json</code>），开箱即用；只有换发布源时才需要改。启动后后台静默检查，有新版本会在右下角提示，下载完再问你要不要更新。</p>
       </div>
       <div class="field">
         <label>只读 token <span class="opt">私有仓库 / 私有存储才需要；只存在本机磁盘，不进浏览器存储</span></label>

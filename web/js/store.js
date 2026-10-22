@@ -43,7 +43,7 @@ export const DEFAULT_SETTINGS = {
   fillDownVer: 2,
   syncOnSwitch: false,
   myColor: '#5B5BF0',
-  manifestUrl: '',
+  manifestUrl: 'https://github.com/JJDJR123/SCHEDULEDECK/releases/download/latest/latest.json',
   // 注意：不放 updateToken —— 更新用的只读 token 只存在磁盘上的 data/update.json，
   // 不写 localStorage，也不经由页面回读
 };
@@ -1157,6 +1157,10 @@ export async function loadState() {
     : JSON.parse(JSON.stringify(DEFAULT_RULES));
   const savedSettings = best.settings || {};
   state.settings = { ...DEFAULT_SETTINGS, ...savedSettings };
+  // 更新地址写死在代码里；老存档是空的话补上默认值
+  if (!String(state.settings.manifestUrl || '').trim()) {
+    state.settings.manifestUrl = DEFAULT_SETTINGS.manifestUrl;
+  }
   // 旧版本把更新 token 存在过设置里，统一清掉（现在只放磁盘）
   delete state.settings.updateToken;
   // 老存档一次性把「向下填充」关掉（它会把空着的负责人算成上一个人）
