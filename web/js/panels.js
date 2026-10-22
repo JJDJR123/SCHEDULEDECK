@@ -231,7 +231,7 @@ export function openCredentialGuide() {
     const b = e.target.closest('[data-k]');
     if (!b) return;
     if (b.dataset.k === 'cg-later') m.close();
-    if (b.dataset.k === 'cg-go') { m.close(); openImport('feishu'); }
+    if (b.dataset.k === 'cg-go') { m.close(); openImport('oauth'); }
   });
   return m;
 }
@@ -833,7 +833,7 @@ export function openSettings(tab = 'source') {
           ? `<button class="btn ghost" data-k="logout" style="flex:none">${icon('user')}退出登录</button>`
           : `<button class="btn ghost" data-k="login" style="flex:none">${icon('user')}去登录</button>`}
       </div>
-      ${src && src.kind === 'feishu' ? `<div class="callout ok">${icon('check-circle')}<div>已保存应用凭证，刷新时会用同一份凭证重新读取；App Secret 只存在本机。</div></div>` : ''}
+      ${src && src.kind === 'feishu' ? `<div class="callout ok">${icon('check-circle')}<div>已用你的飞书账号登录，刷新时会用同一身份重新读取；不需要单独填应用凭证。</div></div>` : ''}
       ${src && src.kind === 'demo' ? `<div class="callout warn">${icon('info')}<div>当前是示例数据，不能同步。导入飞书表格后即可实时刷新。</div></div>` : ''}
       <div class="switch-row">
         <div class="txt"><b>切换数据源时自动同步</b><span>默认关闭：切换只用本地缓存，想看最新就点「立即同步」</span></div>
@@ -1245,7 +1245,7 @@ export function openSettings(tab = 'source') {
 }
 
 function kindLabel(kind) {
-  return { feishu: '飞书表格（应用凭证）', paste: '粘贴导入', demo: '示例数据', csv: 'CSV 链接' }[kind] || kind || '—';
+  return { feishu: '飞书表格（账号登录）', paste: '粘贴导入', demo: '示例数据', csv: 'CSV 链接' }[kind] || kind || '—';
 }
 
 export function applyTheme() {
@@ -1329,7 +1329,7 @@ export function openImport(tab = 'oauth', opts = {}) {
   const push = (data) => applyImport(data, { asNew });
   const m = modal({
     title: asNew ? '新增数据源' : '导入飞书表格',
-    subtitle: asNew ? '再挂一张表，侧栏可以随时切换' : '扫码登录最省事；也可以用应用凭证或直接粘贴',
+    subtitle: asNew ? '再挂一张表，侧栏可以随时切换' : '用飞书账号扫码登录，或直接粘贴表格内容',
     body: '',
     footer: '',
     onClose: () => clearInterval(pollTimer),
@@ -1340,8 +1340,7 @@ export function openImport(tab = 'oauth', opts = {}) {
   function body() {
     return `
       <div class="tabs" style="margin:-6px 0 16px">
-        <button class="tab ${tab === 'oauth' ? 'active' : ''}" data-k="tab" data-v="oauth">${icon('user')}扫码登录</button>
-        <button class="tab ${tab === 'feishu' ? 'active' : ''}" data-k="tab" data-v="feishu">${icon('key')}应用凭证</button>
+        <button class="tab ${tab === 'oauth' ? 'active' : ''}" data-k="tab" data-v="oauth">${icon('user')}飞书登录</button>
         <button class="tab ${tab === 'paste' ? 'active' : ''}" data-k="tab" data-v="paste">${icon('clipboard')}粘贴 / 文件</button>
         <button class="tab ${tab === 'demo' ? 'active' : ''}" data-k="tab" data-v="demo">${icon('sparkles')}示例</button>
       </div>
@@ -1350,7 +1349,6 @@ export function openImport(tab = 'oauth', opts = {}) {
 
   function tabBody() {
     if (tab === 'oauth') return oauthBody();
-    if (tab === 'feishu') return feishuBody();
     if (tab === 'paste') return pasteBody();
     return demoBody();
   }
@@ -1393,28 +1391,6 @@ export function openImport(tab = 'oauth', opts = {}) {
       </details>`;
   }
 
-  function feishuBody() {
-    const src = state.source || {};
-    return `
-      <div class="field">
-        <label>表格链接 <span class="opt">支持 /wiki/、/sheets/、/base/ 链接</span></label>
-        <input class="input" id="impUrl" placeholder="https://xxx.feishu.cn/wiki/xxxx?sheet=xxxx" value="${esc(src.kind === 'feishu' ? src.url : '')}" />
-      </div>
-      <div class="row">
-        <div class="field"><label>App ID</label><input class="input" id="impAppId" placeholder="cli_xxxxxxxx" autocomplete="off" /></div>
-        <div class="field"><label>App Secret</label><input class="input" id="impSecret" type="password" placeholder="只保存在本机" autocomplete="off" /></div>
-      </div>
-      <div class="row" style="align-items:center;margin-bottom:2px">
-        <button class="btn primary" data-k="connect" style="flex:none">${icon('link')}连接并导入</button>
-        <span class="hint" id="impStatus" style="flex:1">首次使用需要先建一个自建应用（约 5 分钟）</span>
-      </div>
-      <div class="callout warn" style="margin-top:14px">${icon('info')}<div>公开分享链接不能直接读取——飞书所有读接口都需要应用凭证。用下面的 6 步建一次应用，之后就能一键同步。<br />只需要「表格 / 多维表格」的只读权限，<b>不需要</b> <code>drive:drive:readonly</code>（整个云盘只读，才需要管理员审批）。</div></div>
-      <details style="margin-top:10px" ${src.kind === 'feishu' ? '' : 'open'}>
-        <summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text-2);padding:6px 0">第一次配置？展开 6 步操作</summary>
-        <div style="padding:8px 0 4px">${FEISHU_STEPS}</div>
-      </details>`;
-  }
-
   function pasteBody() {
     return `
       <div class="field">
@@ -1447,9 +1423,7 @@ export function openImport(tab = 'oauth', opts = {}) {
   async function prefillOAuth() {
     try {
       const j = await (await fetch('/api/config', { cache: 'no-store' })).json();
-      const idEl = m.el.querySelector('#oaAppId');
       const secEl = m.el.querySelector('#oaSecret');
-      if (idEl && !idEl.value && j.appId) idEl.value = j.appId;
       if (secEl && j.hasSecret) secEl.placeholder = '已保存，留空即可';
     } catch { /* ignore */ }
   }
@@ -1559,36 +1533,6 @@ export function openImport(tab = 'oauth', opts = {}) {
         toast({ type: 'ok', title: '已用你的身份读取', text: `${j.data.rows.length} 行 · ${j.data.source.title || ''}` });
       } catch (err) {
         toast({ type: 'err', title: '读取失败', text: err.message, duration: 10000 });
-      } finally {
-        setBusy(b, false);
-      }
-      return;
-    }
-
-    if (k === 'connect') {
-      const url = m.el.querySelector('#impUrl').value.trim();
-      const appId = m.el.querySelector('#impAppId').value.trim();
-      const appSecret = m.el.querySelector('#impSecret').value.trim();
-      const status = m.el.querySelector('#impStatus');
-      if (!url) { toast({ type: 'warn', title: '请先粘贴表格链接' }); return; }
-      setBusy(b, true, '连接中…');
-      status.textContent = '正在换取 token 并读取表格…';
-      try {
-        const res = await fetch('/api/import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, appId: appId || undefined, appSecret: appSecret || undefined }),
-        });
-        const json = await res.json();
-        if (!json.ok) throw new Error(json.error || '导入失败');
-        push(json.data);
-        m.close();
-        document.getElementById('searchInput').value = '';
-        refresh();
-        toast({ type: 'ok', title: '导入成功', text: `${json.data.rows.length} 行 · ${json.data.headers.length} 列 · ${json.data.source.title || ''}` });
-      } catch (err) {
-        status.textContent = '';
-        toast({ type: 'err', title: '导入失败', text: err.message, duration: 9000 });
       } finally {
         setBusy(b, false);
       }
